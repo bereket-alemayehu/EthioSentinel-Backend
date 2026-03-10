@@ -1,0 +1,218 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  CITIZEN
+  HEW
+  ADMIN
+  RESEARCHER
+}
+
+enum Language {
+  AMHARIC
+  AFAAN_OROMOO
+  TIGRINYA
+  SOMALI
+  ENGLISH
+}
+
+enum ReportSource {
+  WEB
+  PWA_OFFLINE
+  PWA_ONLINE
+  API
+  IMPORT
+}
+
+enum ReportStatus {
+  PENDING
+  VERIFIED
+  FLAGGED
+  REJECTED
+  SYNCED
+}
+
+enum AdvisoryStatus {
+  DRAFT
+  APPROVED
+  REJECTED
+  ARCHIVED
+}
+
+enum RiskLevel {
+  LOW
+  MODERATE
+  HIGH
+  CRITICAL
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AlertChannel {
+  WEB
+  SMS
+  USSD
+  EMAIL
+}
+
+model Region {
+  id              Int        @id @default(autoincrement())
+  name            String     @unique
+  code            String     @unique
+  primaryLanguage Language   @default(AMHARIC)
+  districts       District[]
+  users           User[]
+  advisories      Advisory[]
+  alerts          Alert[]
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+}
+
+model District {
+  id         Int             @id @default(autoincrement())
+  regionId   Int
+  name       String
+  code       String          @unique
+  latitude   Decimal?        @db.Decimal(9, 6)
+  longitude  Decimal?        @db.Decimal(9, 6)
+  region     Region          @relation(fields: [regionId], references: [id], onDelete: Cascade)
+  users      User[]
+  reports    DiseaseReport[]
+  advisories Advisory[]
+  alerts     Alert[]
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  @@unique([regionId, name])
+  @@index([regionId])
+}
+
+model User {
+  id                 Int             @id @default(autoincrement())
+  fullName           String
+  email              String          @unique
+  passwordHash       String
+  phoneNumber        String?         @unique
+  role               UserRole
+  isActive           Boolean         @default(true)
+  regionId           Int?
+  districtId         Int?
+  region             Region?         @relation(fields: [regionId], references: [id], onDelete: SetNull)
+  district           District?       @relation(fields: [districtId], references: [id], onDelete: SetNull)
+  submittedReports   DiseaseReport[] @relation("ReportSubmittedBy")
+  approvedAdvisories Advisory[]      @relation("AdvisoryApprovedBy")
+  createdAlerts      Alert[]         @relation("AlertCreatedBy")
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  @@index([role])
+  @@index([regionId])
+  @@index([districtId])
+}
+
+model Disease {
+  id             Int             @id @default(autoincrement())
+  name           String          @unique
+  slug           String          @unique
+  description    String?
+  symptomProfile String?
+  isActive       Boolean         @default(true)
+  reports        DiseaseReport[]
+  advisories     Advisory[]
+  alerts         Alert[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+}
+
+model DiseaseReport {
+  id                  Int          @id @default(autoincrement())
+  districtId          Int
+  diseaseId           Int
+  reporterId          Int
+  reportDate          DateTime
+  caseCount           Int          @default(0)
+  deathCount          Int          @default(0)
+  source              ReportSource @default(PWA_ONLINE)
+  status              ReportStatus @default(PENDING)
+  isMortalityPriority Boolean      @default(false)
+  notes               String?
+  district            District     @relation(fields: [districtId], references: [id], onDelete: Cascade)
+  disease             Disease      @relation(fields: [diseaseId], references: [id], onDelete: Cascade)
+  reporter            User         @relation("ReportSubmittedBy", fields: [reporterId], references: [id], onDelete: Cascade)
+  advisories          Advisory[]
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  @@unique([districtId, diseaseId, reporterId, reportDate])
+  @@index([districtId, reportDate])
+  @@index([diseaseId, reportDate])
+  @@index([status])
+}
+
+model Advisory {
+  id              Int            @id @default(autoincrement())
+  diseaseId       Int
+  regionId        Int
+  districtId      Int?
+  sourceReportId  Int?
+  approvedById    Int?
+  title           String
+  content         String
+  language        Language
+  status          AdvisoryStatus @default(DRAFT)
+  riskLevel       RiskLevel      @default(MODERATE)
+  generatedByAI   Boolean        @default(true)
+  approvedAt      DateTime?
+  disease         Disease        @relation(fields: [diseaseId], references: [id], onDelete: Cascade)
+  region          Region         @relation(fields: [regionId], references: [id], onDelete: Cascade)
+  district        District?      @relation(fields: [districtId], references: [id], onDelete: SetNull)
+  sourceReport    DiseaseReport? @relation(fields: [sourceReportId], references: [id], onDelete: SetNull)
+  approvedBy      User?          @relation("AdvisoryApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  alerts          Alert[]
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([diseaseId])
+  @@index([regionId])
+  @@index([districtId])
+  @@index([status])
+}
+
+model Alert {
+  id            Int           @id @default(autoincrement())
+  regionId      Int
+  districtId    Int?
+  diseaseId     Int?
+  advisoryId    Int?
+  createdById   Int?
+  title         String
+  message       String
+  severity      AlertSeverity
+  channel       AlertChannel
+  deliveryCount Int           @default(0)
+  failedCount   Int           @default(0)
+  sentAt        DateTime?
+  region        Region        @relation(fields: [regionId], references: [id], onDelete: Cascade)
+  district      District?     @relation(fields: [districtId], references: [id], onDelete: SetNull)
+  disease       Disease?      @relation(fields: [diseaseId], references: [id], onDelete: SetNull)
+  advisory      Advisory?     @relation(fields: [advisoryId], references: [id], onDelete: SetNull)
+  createdBy     User?         @relation("AlertCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([regionId])
+  @@index([districtId])
+  @@index([severity])
+  @@index([channel])
+}
