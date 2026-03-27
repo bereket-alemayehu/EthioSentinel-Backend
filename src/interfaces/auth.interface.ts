@@ -1,0 +1,23 @@
+import type { UserRole } from "../../generated/prisma/enums";
+
+export interface ITokenPayload {
+  id: number;
+  role: UserRole;
+  email: string;
+  iat?: number;
+  exp?: number;
+}
+
+export interface IToken {
+  accessToken: string;
+}
+
+export interface ILoginResponse {
+  accessToken: string;
+  user: {
+    id: number;
+    fullName: string;
+    email: string;
+    role: UserRole;
+  };
+}

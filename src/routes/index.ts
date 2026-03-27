@@ -1,20 +1,26 @@
 import { Router } from "express";
-import { advisoriesRouter } from "./advisories.routes";
-import { alertsRouter } from "./alerts.routes";
-import { authRouter } from "./auth.routes";
-import { diseasesRouter } from "./diseases.routes";
-import { healthRouter } from "./health.routes";
-import { regionsRouter } from "./regions.routes";
-import { reportsRouter } from "./reports.routes";
-import { usersRouter } from "./users.routes";
+import authRoutes from "./auth.route";
+import userRoutes from "./user.route";
+import reportRoutes from "./report.route";
+import alertRoutes from "./alert.route";
+import regionRoutes from "./region.route";
+import diseaseRoutes from "./disease.route";
+import advisoryRoutes from "./advisory.route";
+import healthRoutes from "./health.route";
+import adminRoutes from "./admin.route";
+import swaggerRoutes from "./swagger/swagger.config";
 
-export const apiRouter = Router();
+const router = Router();
 
-apiRouter.use(healthRouter);
-apiRouter.use(authRouter);
-apiRouter.use(regionsRouter);
-apiRouter.use(diseasesRouter);
-apiRouter.use(usersRouter);
-apiRouter.use(reportsRouter);
-apiRouter.use(advisoriesRouter);
-apiRouter.use(alertsRouter);
+router.use("/docs", swaggerRoutes);
+router.use("/auth", authRoutes);
+router.use("/users", userRoutes);
+router.use("/reports", reportRoutes);
+router.use("/alerts", alertRoutes);
+router.use("/regions", regionRoutes);
+router.use("/diseases", diseaseRoutes);
+router.use("/advisories", advisoryRoutes);
+router.use("/health", healthRoutes);
+router.use("/admin", adminRoutes);
+
+export default router;
