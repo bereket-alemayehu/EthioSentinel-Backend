@@ -149,3 +149,9 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Python artifacts (anomaly-detection-service)
+anomaly-detection-service/.venv/
+anomaly-detection-service/__pycache__/
+anomaly-detection-service/.pytest_cache/
+anomaly-detection-service/**/*.pyc
