@@ -1,5 +1,9 @@
 import { prisma } from "../lib/prisma";
-import { AlertChannel, AlertSeverity } from "../../generated/prisma/enums";
+import {
+  AdvisoryStatus,
+  AlertChannel,
+  AlertSeverity,
+} from "../../generated/prisma/enums";
 import { AppError } from "../utils/AppError";
 import { logger } from "../utils/logger";
 import { EmailSender } from "../utils/EmailSender";
@@ -27,6 +31,24 @@ type AlertNotificationDetails = {
 };
 
 export class AlertService {
+  private static async assertAdvisoryApproved(advisoryId: number) {
+    const advisory = await prisma.advisory.findUnique({
+      where: { id: advisoryId },
+      select: { id: true, status: true },
+    });
+
+    if (!advisory) {
+      throw new AppError("Linked advisory not found", 404);
+    }
+
+    if (advisory.status !== AdvisoryStatus.APPROVED) {
+      throw new AppError(
+        "Linked advisory must be APPROVED before alert approval/broadcast",
+        400,
+      );
+    }
+  }
+
   private static toAlertManagementView(alert: {
     id: number;
     severity: AlertSeverity;
@@ -128,6 +150,10 @@ export class AlertService {
       throw new AppError("Alert not found", 404);
     }
 
+    if (existingAlert.advisoryId) {
+      await this.assertAdvisoryApproved(existingAlert.advisoryId);
+    }
+
     const updatedAlert = await prisma.alert.update({
       where: { id: alertId },
       data: {
@@ -215,6 +241,17 @@ export class AlertService {
       throw new AppError("regionId, title and message are required", 400);
     }
 
+    if (sentAt) {
+      throw new AppError(
+        "Alerts cannot be marked as sent during creation; use approval workflow",
+        400,
+      );
+    }
+
+    if (advisoryId) {
+      await this.assertAdvisoryApproved(advisoryId);
+    }
+
     return prisma.alert.create({
       data: {
         regionId,
@@ -226,7 +263,7 @@ export class AlertService {
         message,
         severity: severity ?? AlertSeverity.MEDIUM,
         channel: channel ?? AlertChannel.WEB,
-        sentAt: sentAt ? new Date(sentAt) : undefined,
+        sentAt: undefined,
       },
     });
   }

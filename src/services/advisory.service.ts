@@ -341,20 +341,34 @@ export class AdvisoryService {
       );
     }
 
+    if (status && status !== AdvisoryStatus.DRAFT) {
+      throw new AppError(
+        "New advisories must start in DRAFT and cannot be immediately approved",
+        400,
+      );
+    }
+
+    if (approvedById) {
+      throw new AppError(
+        "approvedById cannot be set during advisory creation",
+        400,
+      );
+    }
+
     return prisma.advisory.create({
       data: {
         diseaseId,
         regionId,
         districtId,
         sourceReportId,
-        approvedById,
+        approvedById: undefined,
         title,
         content,
         language: language ?? Language.AMHARIC,
-        status: status ?? AdvisoryStatus.DRAFT,
+        status: AdvisoryStatus.DRAFT,
         riskLevel: riskLevel ?? RiskLevel.MODERATE,
         generatedByAI: generatedByAI ?? true,
-        approvedAt: status === AdvisoryStatus.APPROVED ? new Date() : undefined,
+        approvedAt: undefined,
       },
     });
   }
