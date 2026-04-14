@@ -7,17 +7,24 @@ import { UserRole } from "../../generated/prisma/enums";
 const router = Router();
 
 router.get(
+  "/weekly",
+  authenticate,
+  authorize(UserRole.ADMIN, UserRole.HEW, UserRole.RESEARCHER),
+  ReportController.getWeeklyReports,
+);
+
+router.get(
   "/",
   authenticate,
   authorize(UserRole.ADMIN, UserRole.HEW, UserRole.RESEARCHER),
-  ReportController.getAllReports
+  ReportController.getAllReports,
 );
 
 router.post(
   "/",
   authenticate,
   authorize(UserRole.ADMIN, UserRole.HEW),
-  ReportController.createReport
+  ReportController.createReport,
 );
 
 export default router;
