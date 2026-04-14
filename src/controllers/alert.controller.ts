@@ -9,6 +9,18 @@ export class AlertController {
     return sendSuccess(res, alerts, "Alerts retrieved successfully");
   });
 
+  static approveAlert = catchAsync(async (req: Request, res: Response) => {
+    const alertId = Number(req.params.id);
+    const alert = await AlertService.approveAlert(alertId);
+    return sendSuccess(res, alert, "Alert approved successfully");
+  });
+
+  static rejectAlert = catchAsync(async (req: Request, res: Response) => {
+    const alertId = Number(req.params.id);
+    const alert = await AlertService.rejectAlert(alertId);
+    return sendSuccess(res, alert, "Alert rejected successfully");
+  });
+
   static createAlert = catchAsync(async (req: Request, res: Response) => {
     const alertData = {
       ...req.body,

@@ -6,13 +6,32 @@ import { UserRole } from "../../generated/prisma/enums";
 
 const router = Router();
 
-router.get("/", AlertController.getAllAlerts);
+router.get(
+  "/",
+  authenticate,
+  authorize(UserRole.ADMIN),
+  AlertController.getAllAlerts,
+);
+
+router.put(
+  "/:id/approve",
+  authenticate,
+  authorize(UserRole.ADMIN),
+  AlertController.approveAlert,
+);
+
+router.put(
+  "/:id/reject",
+  authenticate,
+  authorize(UserRole.ADMIN),
+  AlertController.rejectAlert,
+);
 
 router.post(
   "/",
   authenticate,
   authorize(UserRole.ADMIN),
-  AlertController.createAlert
+  AlertController.createAlert,
 );
 
 export default router;
