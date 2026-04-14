@@ -12,6 +12,13 @@ router.post("/generate", AdvisoryController.generateAdvisoryText);
 
 router.get("/", AdvisoryController.getAllAdvisories);
 
+router.get(
+  "/drafts",
+  authenticate,
+  authorize(UserRole.ADMIN, UserRole.HEW),
+  AdvisoryController.getDraftAdvisoryQueue,
+);
+
 router.post(
   "/",
   authenticate,
@@ -24,6 +31,13 @@ router.patch(
   authenticate,
   authorize(UserRole.ADMIN),
   AdvisoryController.approveAdvisory,
+);
+
+router.patch(
+  "/:id/status",
+  authenticate,
+  authorize(UserRole.ADMIN, UserRole.HEW),
+  AdvisoryController.transitionDraftAdvisoryStatus,
 );
 
 export default router;

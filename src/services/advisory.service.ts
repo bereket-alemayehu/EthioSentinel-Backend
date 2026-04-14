@@ -40,7 +40,33 @@ type SymptomCheckerResult = {
   language: SupportedLanguage;
 };
 
+type DraftQueueParams = {
+  page?: number;
+  limit?: number;
+  search?: string;
+  diseaseId?: number;
+  regionId?: number;
+  districtId?: number;
+  riskLevel?: RiskLevel;
+  language?: Language;
+};
+
+type DraftTransitionStatus = "APPROVED" | "REJECTED" | "ARCHIVED";
+
 export class AdvisoryService {
+  private static advisoryInclude = {
+    disease: true,
+    region: true,
+    district: true,
+    approvedBy: {
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+      },
+    },
+  };
+
   static checkSymptoms(data: SymptomCheckerInput): SymptomCheckerResult {
     const symptomsRaw = Array.isArray(data.symptoms) ? data.symptoms : [];
     const selectedSymptoms = symptomsRaw
@@ -217,22 +243,68 @@ export class AdvisoryService {
 
   static async getAllAdvisories() {
     return prisma.advisory.findMany({
-      include: {
-        disease: true,
-        region: true,
-        district: true,
-        approvedBy: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-          },
-        },
-      },
+      include: this.advisoryInclude,
       orderBy: {
         createdAt: "desc",
       },
     });
+  }
+
+  static async getDraftAdvisoryQueue(params: DraftQueueParams) {
+    const page =
+      Number.isFinite(params.page) && (params.page as number) > 0
+        ? Math.floor(params.page as number)
+        : 1;
+    const limit =
+      Number.isFinite(params.limit) && (params.limit as number) > 0
+        ? Math.min(Math.floor(params.limit as number), 100)
+        : 10;
+    const skip = (page - 1) * limit;
+
+    const where = {
+      status: AdvisoryStatus.DRAFT,
+      generatedByAI: true,
+      diseaseId: params.diseaseId,
+      regionId: params.regionId,
+      districtId: params.districtId,
+      riskLevel: params.riskLevel,
+      language: params.language,
+      ...(params.search
+        ? {
+            OR: [
+              { title: { contains: params.search, mode: "insensitive" as const } },
+              { content: { contains: params.search, mode: "insensitive" as const } },
+            ],
+          }
+        : {}),
+    };
+
+    const [items, total] = await prisma.$transaction([
+      prisma.advisory.findMany({
+        where,
+        include: this.advisoryInclude,
+        orderBy: {
+          createdAt: "desc",
+        },
+        skip,
+        take: limit,
+      }),
+      prisma.advisory.count({ where }),
+    ]);
+
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+
+    return {
+      items,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
+      },
+    };
   }
 
   static async createAdvisory(data: {
@@ -299,6 +371,43 @@ export class AdvisoryService {
         approvedAt: new Date(),
         approvedById: userId,
       },
+    });
+  }
+
+  static async transitionDraftAdvisoryStatus(
+    advisoryId: number,
+    status: DraftTransitionStatus,
+    userId: number,
+  ) {
+    if (Number.isNaN(advisoryId)) {
+      throw new AppError("Invalid advisory id", 400);
+    }
+
+    const advisory = await prisma.advisory.findUnique({
+      where: { id: advisoryId },
+      select: { id: true, status: true, generatedByAI: true },
+    });
+
+    if (!advisory) {
+      throw new AppError("Advisory not found", 404);
+    }
+
+    if (advisory.status !== AdvisoryStatus.DRAFT) {
+      throw new AppError("Only draft advisories can be transitioned", 400);
+    }
+
+    if (!advisory.generatedByAI) {
+      throw new AppError("Only AI-generated draft advisories are supported", 400);
+    }
+
+    return prisma.advisory.update({
+      where: { id: advisoryId },
+      data: {
+        status,
+        approvedAt: status === AdvisoryStatus.APPROVED ? new Date() : null,
+        approvedById: status === AdvisoryStatus.APPROVED ? userId : null,
+      },
+      include: this.advisoryInclude,
     });
   }
 }
