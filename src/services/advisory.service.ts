@@ -25,7 +25,98 @@ type AdvisoryGenerationResult = {
   treatmentAdvice: string[];
 };
 
+type SymptomCheckerInput = {
+  symptoms?: string[];
+  language?: string;
+  location?: string;
+};
+
+type SymptomCheckerResult = {
+  selectedSymptoms: string[];
+  probableDisease: string;
+  riskLevel: "LOW" | "MODERATE" | "HIGH";
+  advice: string;
+  disclaimer: string;
+  language: SupportedLanguage;
+};
+
 export class AdvisoryService {
+  static checkSymptoms(data: SymptomCheckerInput): SymptomCheckerResult {
+    const symptomsRaw = Array.isArray(data.symptoms) ? data.symptoms : [];
+    const selectedSymptoms = symptomsRaw
+      .map((item) => String(item).trim().toLowerCase())
+      .filter((item) => item.length > 0);
+
+    if (selectedSymptoms.length === 0) {
+      throw new AppError("At least one symptom is required", 400);
+    }
+
+    const languageRaw = String(data.language ?? "ENGLISH")
+      .trim()
+      .toUpperCase();
+    if (
+      ![Language.ENGLISH, Language.AMHARIC].includes(
+        languageRaw as SupportedLanguage,
+      )
+    ) {
+      throw new AppError("language must be ENGLISH or AMHARIC", 400);
+    }
+
+    const language = languageRaw as SupportedLanguage;
+    const location = String(data.location ?? "your area").trim() || "your area";
+
+    const hasFever = selectedSymptoms.includes("fever");
+    const hasCough = selectedSymptoms.includes("cough");
+    const hasDiarrhea = selectedSymptoms.includes("diarrhea");
+    const hasVomiting = selectedSymptoms.includes("vomiting");
+    const hasHeadache = selectedSymptoms.includes("headache");
+    const hasBodyPain = selectedSymptoms.includes("body pain");
+
+    let probableDisease = "General febrile illness";
+    let riskLevel: "LOW" | "MODERATE" | "HIGH" = "LOW";
+
+    if ((hasFever && hasDiarrhea) || (hasVomiting && hasDiarrhea)) {
+      probableDisease = "Cholera-like illness";
+      riskLevel = "HIGH";
+    } else if (hasFever && hasHeadache && hasBodyPain) {
+      probableDisease = "Malaria-like illness";
+      riskLevel = "MODERATE";
+    } else if (hasFever && hasCough) {
+      probableDisease = "Respiratory infection";
+      riskLevel = "MODERATE";
+    }
+
+    const adviceEn =
+      riskLevel === "HIGH"
+        ? `High risk signs detected for ${location}. Seek immediate care at the nearest health facility and avoid dehydration.`
+        : riskLevel === "MODERATE"
+          ? `Moderate risk signs detected for ${location}. Visit a health center soon for clinical assessment.`
+          : `Low risk signs detected for ${location}. Rest, hydrate, and monitor symptoms. Seek care if symptoms worsen.`;
+
+    const disclaimerEn =
+      "This symptom checker is for guidance only and is not a medical diagnosis. Please consult a healthcare professional.";
+
+    if (language === "AMHARIC") {
+      return {
+        selectedSymptoms,
+        probableDisease: `[AMHARIC PLACEHOLDER] ${probableDisease}`,
+        riskLevel,
+        advice: `[AMHARIC PLACEHOLDER] ${adviceEn}`,
+        disclaimer: `[AMHARIC PLACEHOLDER] ${disclaimerEn}`,
+        language,
+      };
+    }
+
+    return {
+      selectedSymptoms,
+      probableDisease,
+      riskLevel,
+      advice: adviceEn,
+      disclaimer: disclaimerEn,
+      language,
+    };
+  }
+
   static generateHealthAdvisoryText(
     data: AdvisoryGenerationInput,
   ): AdvisoryGenerationResult {

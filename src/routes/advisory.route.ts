@@ -6,6 +6,8 @@ import { UserRole } from "../../generated/prisma/enums";
 
 const router = Router();
 
+router.post("/symptom-check", AdvisoryController.symptomCheck);
+
 router.post("/generate", AdvisoryController.generateAdvisoryText);
 
 router.get("/", AdvisoryController.getAllAdvisories);

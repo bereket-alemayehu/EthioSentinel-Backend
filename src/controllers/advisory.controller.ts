@@ -4,6 +4,11 @@ import { catchAsync } from "../utils/catchAsync";
 import { sendSuccess } from "../utils/response.util";
 
 export class AdvisoryController {
+  static symptomCheck = catchAsync(async (req: Request, res: Response) => {
+    const result = AdvisoryService.checkSymptoms(req.body);
+    return sendSuccess(res, result, "Symptom assessment completed");
+  });
+
   static generateAdvisoryText = catchAsync(
     async (req: Request, res: Response) => {
       const advisory = AdvisoryService.generateHealthAdvisoryText(req.body);
