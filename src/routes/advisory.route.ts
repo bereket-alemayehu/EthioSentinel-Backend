@@ -6,20 +6,22 @@ import { UserRole } from "../../generated/prisma/enums";
 
 const router = Router();
 
+router.post("/generate", AdvisoryController.generateAdvisoryText);
+
 router.get("/", AdvisoryController.getAllAdvisories);
 
 router.post(
   "/",
   authenticate,
   authorize(UserRole.ADMIN),
-  AdvisoryController.createAdvisory
+  AdvisoryController.createAdvisory,
 );
 
 router.patch(
   "/:id/approve",
   authenticate,
   authorize(UserRole.ADMIN),
-  AdvisoryController.approveAdvisory
+  AdvisoryController.approveAdvisory,
 );
 
 export default router;

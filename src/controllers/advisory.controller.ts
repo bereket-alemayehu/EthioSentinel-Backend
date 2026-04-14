@@ -4,6 +4,13 @@ import { catchAsync } from "../utils/catchAsync";
 import { sendSuccess } from "../utils/response.util";
 
 export class AdvisoryController {
+  static generateAdvisoryText = catchAsync(
+    async (req: Request, res: Response) => {
+      const advisory = AdvisoryService.generateHealthAdvisoryText(req.body);
+      return sendSuccess(res, advisory, "Advisory text generated successfully");
+    },
+  );
+
   static getAllAdvisories = catchAsync(async (req: Request, res: Response) => {
     const advisories = await AdvisoryService.getAllAdvisories();
     return sendSuccess(res, advisories, "Advisories retrieved successfully");
