@@ -2,6 +2,7 @@ import { prisma } from "../lib/prisma";
 import { AlertChannel, AlertSeverity } from "../../generated/prisma/enums";
 import { AppError } from "../utils/AppError";
 import { logger } from "../utils/logger";
+import { EmailSender } from "../utils/EmailSender";
 
 type AlertWorkflowStatus = "Draft" | "Approved";
 
@@ -11,6 +12,18 @@ type AlertManagementView = {
   severity: AlertSeverity;
   advisory: string;
   status: AlertWorkflowStatus;
+};
+
+type AlertNotificationDetails = {
+  id: number;
+  regionId: number;
+  districtId: number | null;
+  severity: AlertSeverity;
+  message: string;
+  disease: { name: string } | null;
+  advisory: { content: string } | null;
+  region: { name: string };
+  district: { name: string } | null;
 };
 
 export class AlertService {
@@ -31,12 +44,52 @@ export class AlertService {
     };
   }
 
-  private static async triggerApprovalNotification(alert: AlertManagementView) {
+  private static async triggerApprovalNotification(
+    alert: AlertNotificationDetails,
+  ) {
+    const location = alert.district
+      ? `${alert.district.name}, ${alert.region.name}`
+      : alert.region.name;
+
+    const recipients = await prisma.user.findMany({
+      where: {
+        isActive: true,
+        ...(alert.districtId
+          ? { districtId: alert.districtId }
+          : { regionId: alert.regionId }),
+      },
+      select: {
+        email: true,
+      },
+    });
+
+    const emails = recipients
+      .map((user) => user.email)
+      .filter((email) => Boolean(email));
+
+    const emailResult = await EmailSender.sendBulkAlertApprovalEmails(emails, {
+      disease: alert.disease?.name ?? "Unknown disease",
+      location,
+      advisory: alert.advisory?.content ?? alert.message,
+      severity: alert.severity,
+    });
+
+    await prisma.alert.update({
+      where: { id: alert.id },
+      data: {
+        deliveryCount: emailResult.delivered,
+        failedCount: emailResult.failed,
+      },
+    });
+
     logger.info("Alert approved notification triggered", {
       alertId: alert.id,
-      disease: alert.disease,
+      disease: alert.disease?.name ?? null,
       severity: alert.severity,
-      status: alert.status,
+      location,
+      recipientsAttempted: emailResult.attempted,
+      delivered: emailResult.delivered,
+      failed: emailResult.failed,
     });
   }
 
@@ -64,6 +117,8 @@ export class AlertService {
     const existingAlert = await prisma.alert.findUnique({
       where: { id: alertId },
       include: {
+        region: true,
+        district: true,
         disease: true,
         advisory: true,
       },
@@ -79,13 +134,15 @@ export class AlertService {
         sentAt: new Date(),
       },
       include: {
+        region: true,
+        district: true,
         disease: true,
         advisory: true,
       },
     });
 
     const managementView = this.toAlertManagementView(updatedAlert);
-    await this.triggerApprovalNotification(managementView);
+    await this.triggerApprovalNotification(updatedAlert);
 
     return managementView;
   }
@@ -98,6 +155,8 @@ export class AlertService {
     const existingAlert = await prisma.alert.findUnique({
       where: { id: alertId },
       include: {
+        region: true,
+        district: true,
         disease: true,
         advisory: true,
       },
@@ -111,8 +170,12 @@ export class AlertService {
       where: { id: alertId },
       data: {
         sentAt: null,
+        deliveryCount: 0,
+        failedCount: 0,
       },
       include: {
+        region: true,
+        district: true,
         disease: true,
         advisory: true,
       },
