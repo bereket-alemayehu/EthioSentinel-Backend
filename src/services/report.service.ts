@@ -17,6 +17,29 @@ type WeeklyReportAggregate = {
 };
 
 export class ReportService {
+  private static toSpecCompatibleReport<T extends {
+    id: number;
+    reportDate: Date;
+    source: ReportSource;
+    disease?: { id: number; name: string } | null;
+    district?: { id: number; name: string } | null;
+  }>(report: T): T & {
+    diseaseType: string | null;
+    districtName: string | null;
+    timestamp: string;
+    offline: boolean;
+    idString: string;
+  } {
+    return {
+      ...report,
+      diseaseType: report.disease?.name ?? null,
+      districtName: report.district?.name ?? null,
+      timestamp: report.reportDate.toISOString(),
+      offline: report.source === ReportSource.PWA_OFFLINE,
+      idString: String(report.id),
+    };
+  }
+
   private static getWeekStartUTC(date: Date): Date {
     const utcDate = new Date(
       Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
@@ -131,7 +154,7 @@ export class ReportService {
   }
 
   static async getAllReports() {
-    return prisma.diseaseReport.findMany({
+    const reports = await prisma.diseaseReport.findMany({
       include: {
         disease: true,
         district: true,
@@ -148,15 +171,20 @@ export class ReportService {
         reportDate: "desc",
       },
     });
+    return reports.map((report) => this.toSpecCompatibleReport(report));
   }
 
   static async createReport(data: {
     districtId?: number;
     diseaseId?: number;
+    district?: string;
+    diseaseType?: string;
     reporterId?: number;
     reportDate?: string;
+    timestamp?: string;
     caseCount?: number;
     deathCount?: number;
+    offline?: boolean;
     source?: ReportSource;
     status?: ReportStatus;
     notes?: string;
@@ -165,19 +193,44 @@ export class ReportService {
     const {
       districtId,
       diseaseId,
+      district,
+      diseaseType,
       reporterId,
       reportDate,
+      timestamp,
       caseCount,
       deathCount,
+      offline,
       source,
       status,
       notes,
       user,
     } = data;
 
-    if (!districtId || !diseaseId || !reportDate) {
+    let resolvedDistrictId = districtId;
+    let resolvedDiseaseId = diseaseId;
+
+    if (!resolvedDistrictId && district) {
+      const districtRecord = await prisma.district.findFirst({
+        where: { name: { equals: district, mode: "insensitive" } },
+        select: { id: true },
+      });
+      resolvedDistrictId = districtRecord?.id;
+    }
+
+    if (!resolvedDiseaseId && diseaseType) {
+      const diseaseRecord = await prisma.disease.findFirst({
+        where: { name: { equals: diseaseType, mode: "insensitive" } },
+        select: { id: true },
+      });
+      resolvedDiseaseId = diseaseRecord?.id;
+    }
+
+    const effectiveReportDate = reportDate ?? timestamp ?? new Date().toISOString();
+
+    if (!resolvedDistrictId || !resolvedDiseaseId || !effectiveReportDate) {
       throw new AppError(
-        "districtId, diseaseId and reportDate are required",
+        "districtId/district, diseaseId/diseaseType and reportDate/timestamp are required",
         400,
       );
     }
@@ -191,13 +244,13 @@ export class ReportService {
 
     return prisma.diseaseReport.create({
       data: {
-        districtId,
-        diseaseId,
+        districtId: resolvedDistrictId,
+        diseaseId: resolvedDiseaseId,
         reporterId: effectiveReporterId,
-        reportDate: new Date(reportDate),
+        reportDate: new Date(effectiveReportDate),
         caseCount: caseCount ?? 0,
         deathCount: deathCount ?? 0,
-        source: source ?? ReportSource.PWA_ONLINE,
+        source: source ?? (offline ? ReportSource.PWA_OFFLINE : ReportSource.PWA_ONLINE),
         status: status ?? ReportStatus.PENDING,
         isMortalityPriority: (deathCount ?? 0) > 0,
         notes,
@@ -206,6 +259,6 @@ export class ReportService {
         disease: true,
         district: true,
       },
-    });
+    }).then((report) => this.toSpecCompatibleReport(report));
   }
 }

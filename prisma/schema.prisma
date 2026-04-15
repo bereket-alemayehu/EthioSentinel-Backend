@@ -136,6 +136,10 @@ model Disease {
 }
 
 model DiseaseReport {
+  /// Intentional deviation from product spec: keep normalized FK design and Int id.
+  /// Disease and district remain relational entities (diseaseId/districtId) instead
+  /// of denormalized strings to preserve referential integrity and query efficiency.
+  /// UUID migration can be handled later as a dedicated cross-table breaking change.
   id                  Int          @id @default(autoincrement())
   districtId          Int
   diseaseId           Int
