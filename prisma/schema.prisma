@@ -161,6 +161,10 @@ model DiseaseReport {
 }
 
 model Advisory {
+  /// Intentional deviation from product spec: keep Int id and normalized disease
+  /// relation (diseaseId) instead of UUID + diseaseType string. This preserves
+  /// referential integrity and analytics joins; services expose compatibility
+  /// fields (diseaseType/idString) for spec-aligned payloads.
   id              Int            @id @default(autoincrement())
   diseaseId       Int
   regionId        Int
