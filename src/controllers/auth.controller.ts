@@ -5,8 +5,9 @@ import { sendSuccess } from "../utils/response.util";
 
 export class AuthController {
   static login = catchAsync(async (req: Request, res: Response) => {
-    const { email, password } = req.body;
-    const { accessToken, user } = await AuthService.login(email, password);
+    const { identifier, email, username, password } = req.body;
+    const loginIdentifier = identifier ?? username ?? email;
+    const { accessToken, user } = await AuthService.login(loginIdentifier, password);
 
     res.cookie("accessToken", accessToken, {
       httpOnly: true,

@@ -2,7 +2,7 @@ import { prisma } from "../lib/prisma";
 import {
   ReportSource,
   ReportStatus,
-  UserRole,
+  Role,
 } from "../../generated/prisma/enums";
 import { AppError } from "../utils/AppError";
 import PDFDocument from "pdfkit";
@@ -160,7 +160,7 @@ export class ReportService {
     source?: ReportSource;
     status?: ReportStatus;
     notes?: string;
-    user: { id: number; role: UserRole };
+    user: { id: number; role: Role };
   }) {
     const {
       districtId,
@@ -183,7 +183,7 @@ export class ReportService {
     }
 
     const effectiveReporterId =
-      user.role === UserRole.HEW ? user.id : reporterId;
+      user.role === Role.HEW ? user.id : reporterId;
 
     if (!effectiveReporterId) {
       throw new AppError("reporterId is required", 400);

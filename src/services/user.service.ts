@@ -5,10 +5,14 @@ export class UserService {
     return prisma.user.findMany({
       select: {
         id: true,
+        username: true,
         fullName: true,
         email: true,
         phoneNumber: true,
         role: true,
+        regionName: true,
+        assignedDistrict: true,
+        clearanceLevel: true,
         isActive: true,
         regionId: true,
         districtId: true,
@@ -18,6 +22,11 @@ export class UserService {
       orderBy: {
         createdAt: "desc",
       },
-    });
+    }).then((users) =>
+      users.map((user) => ({
+        ...user,
+        region: user.regionName,
+      })),
+    );
   }
 }

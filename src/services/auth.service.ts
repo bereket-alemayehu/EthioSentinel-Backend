@@ -4,13 +4,19 @@ import { signAccessToken } from "../utils/token.util";
 import { AppError } from "../utils/AppError";
 
 export class AuthService {
-  static async login(email?: string, password?: string) {
-    if (!email || !password) {
-      throw new AppError("Email and password are required", 400);
+  static async login(identifier?: string, password?: string) {
+    if (!identifier || !password) {
+      throw new AppError("Username/email and password are required", 400);
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email },
+    const normalizedIdentifier = identifier.trim();
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: normalizedIdentifier },
+          { username: normalizedIdentifier },
+        ],
+      },
     });
 
     if (!user || !user.isActive) {
@@ -33,9 +39,13 @@ export class AuthService {
       accessToken,
       user: {
         id: user.id,
+        username: user.username,
         fullName: user.fullName,
         email: user.email,
         role: user.role,
+        region: user.regionName,
+        assignedDistrict: user.assignedDistrict,
+        clearanceLevel: user.clearanceLevel,
         regionId: user.regionId,
         districtId: user.districtId,
       },
@@ -47,10 +57,14 @@ export class AuthService {
       where: { id: userId },
       select: {
         id: true,
+        username: true,
         fullName: true,
         email: true,
         phoneNumber: true,
         role: true,
+        regionName: true,
+        assignedDistrict: true,
+        clearanceLevel: true,
         isActive: true,
         regionId: true,
         districtId: true,
@@ -62,6 +76,9 @@ export class AuthService {
       throw new AppError("User not found", 404);
     }
 
-    return user;
+    return {
+      ...user,
+      region: user.regionName,
+    };
   }
 }
