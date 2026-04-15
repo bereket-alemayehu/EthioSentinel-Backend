@@ -22,4 +22,10 @@ export const env = cleanEnv(process.env, {
   SMTP_USER: str({ default: "" }),
   SMTP_PASS: str({ default: "" }),
   SMTP_FROM: str({ default: "noreply@ethiosentinel.local" }),
+  AI_SERVICE_BASE_URL: str({ default: "http://127.0.0.1:5000" }),
+  AI_SERVICE_TIMEOUT_MS: num({ default: 5000 }),
+  AI_SERVICE_RETRY_COUNT: num({ default: 3 }),
+  AI_SERVICE_RETRY_DELAY_MS: num({ default: 1000 }),
+  AI_SERVICE_ZSCORE_PATH: str({ default: "/anomaly/zscore" }),
+  AI_WEBHOOK_TOKEN: str({ default: "" }),
 });
