@@ -39,7 +39,6 @@ type SymptomCheckerResult = {
   disclaimer: string;
   language: SupportedLanguage;
 };
-
 export class AdvisoryService {
   static checkSymptoms(data: SymptomCheckerInput): SymptomCheckerResult {
     const symptomsRaw = Array.isArray(data.symptoms) ? data.symptoms : [];
