@@ -8,10 +8,15 @@ type AlertWorkflowStatus = "Draft" | "Approved";
 
 type AlertManagementView = {
   id: number;
+  idString: string;
   disease: string | null;
   severity: AlertSeverity;
+  severityString: string;
+  channelString: string;
   advisory: string;
   status: AlertWorkflowStatus;
+  targetZone: string;
+  isDelivered: boolean;
 };
 
 type AlertNotificationDetails = {
@@ -30,18 +35,43 @@ export class AlertService {
   private static toAlertManagementView(alert: {
     id: number;
     severity: AlertSeverity;
+    channel: AlertChannel;
     message: string;
     sentAt: Date | null;
     disease: { name: string } | null;
     advisory: { content: string } | null;
+    region: { name: string } | null;
+    district: { name: string } | null;
   }): AlertManagementView {
+    const targetZone = alert.district?.name ?? alert.region?.name ?? "Unknown";
     return {
       id: alert.id,
+      idString: String(alert.id),
       disease: alert.disease?.name ?? null,
       severity: alert.severity,
+      severityString: alert.severity,
+      channelString: alert.channel,
       advisory: alert.advisory?.content ?? alert.message,
       status: alert.sentAt ? "Approved" : "Draft",
+      targetZone,
+      isDelivered: Boolean(alert.sentAt),
     };
+  }
+
+  private static parseEnumValue<T extends string>(
+    value: unknown,
+    enumObject: Record<string, T>,
+    field: string,
+  ): T | undefined {
+    if (value === undefined || value === null || value === "") {
+      return undefined;
+    }
+    const normalized = String(value).trim().toUpperCase();
+    const allowedValues = Object.values(enumObject);
+    if (!allowedValues.includes(normalized as T)) {
+      throw new AppError(`${field} must be one of: ${allowedValues.join(", ")}`, 400);
+    }
+    return normalized as T;
   }
 
   private static async triggerApprovalNotification(
@@ -187,19 +217,22 @@ export class AlertService {
   static async createAlert(data: {
     regionId?: number;
     districtId?: number;
+    targetZone?: string;
     diseaseId?: number;
     advisoryId?: number;
     createdById?: number;
     title?: string;
     message?: string;
-    severity?: AlertSeverity;
-    channel?: AlertChannel;
+    severity?: AlertSeverity | string;
+    channel?: AlertChannel | string;
+    isDelivered?: boolean;
     sentAt?: string;
     userId: number;
   }) {
     const {
       regionId,
       districtId,
+      targetZone,
       diseaseId,
       advisoryId,
       createdById,
@@ -207,27 +240,64 @@ export class AlertService {
       message,
       severity,
       channel,
+      isDelivered,
       sentAt,
       userId,
     } = data;
 
-    if (!regionId || !title || !message) {
-      throw new AppError("regionId, title and message are required", 400);
+    let resolvedRegionId = regionId;
+    let resolvedDistrictId = districtId;
+    if (!resolvedRegionId && targetZone) {
+      const trimmedTargetZone = targetZone.trim();
+      if (trimmedTargetZone) {
+        const district = await prisma.district.findFirst({
+          where: { name: { equals: trimmedTargetZone, mode: "insensitive" } },
+          select: { id: true, regionId: true },
+        });
+        if (district) {
+          resolvedDistrictId = district.id;
+          resolvedRegionId = district.regionId;
+        } else {
+          const region = await prisma.region.findFirst({
+            where: { name: { equals: trimmedTargetZone, mode: "insensitive" } },
+            select: { id: true },
+          });
+          resolvedRegionId = region?.id;
+        }
+      }
     }
 
-    return prisma.alert.create({
+    const parsedSeverity =
+      this.parseEnumValue(severity, AlertSeverity, "severity") ??
+      AlertSeverity.MEDIUM;
+    const parsedChannel =
+      this.parseEnumValue(channel, AlertChannel, "channel") ?? AlertChannel.WEB;
+
+    if (!resolvedRegionId || !title || !message) {
+      throw new AppError("regionId or targetZone, title and message are required", 400);
+    }
+
+    const alert = await prisma.alert.create({
       data: {
-        regionId,
-        districtId,
+        regionId: resolvedRegionId,
+        districtId: resolvedDistrictId,
         diseaseId,
         advisoryId,
         createdById: createdById ?? userId,
         title,
         message,
-        severity: severity ?? AlertSeverity.MEDIUM,
-        channel: channel ?? AlertChannel.WEB,
-        sentAt: sentAt ? new Date(sentAt) : undefined,
+        severity: parsedSeverity,
+        channel: parsedChannel,
+        sentAt: isDelivered ? new Date() : sentAt ? new Date(sentAt) : undefined,
+      },
+      include: {
+        region: true,
+        district: true,
+        disease: true,
+        advisory: true,
       },
     });
+
+    return this.toAlertManagementView(alert);
   }
 }
