@@ -39,7 +39,6 @@ type SymptomCheckerResult = {
   disclaimer: string;
   language: SupportedLanguage;
 };
-
 export class AdvisoryService {
   private static toSpecCompatibleAdvisory<T extends {
     id: number;

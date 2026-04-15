@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from "express";
-import type { UserRole } from "../../generated/prisma/enums";
+import type { Role } from "../../generated/prisma/enums";
 import { AppError } from "../utils/AppError";
 
-export const authorize = (...roles: UserRole[]) => {
+export const authorize = (...roles: Role[]) => {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) {
       return next(new AppError("Authentication required", 401));
