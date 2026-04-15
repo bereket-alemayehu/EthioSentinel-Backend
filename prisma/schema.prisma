@@ -190,6 +190,10 @@ model Advisory {
 }
 
 model Alert {
+  /// Intentional deviation from product spec: keep normalized regionId/districtId
+  /// target relations and Int id for data integrity and geo-query efficiency.
+  /// Services map these relations to spec terminology (targetZone, idString,
+  /// severity/channel strings, isDelivered) in API payloads.
   id            Int           @id @default(autoincrement())
   regionId      Int
   districtId    Int?
