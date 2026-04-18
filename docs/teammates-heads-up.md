@@ -245,4 +245,217 @@ const weekStartDate = this.getWeekStartUTC(report.timestamp);
 
 ---
 
+---
+
+## 📋 Change: Advisory model (Task 4) + Alert model (Task 5)
+
+**Branch:** `feature/prisma-schema-group1-enums-models`
+**Date:** 2026-04-15
+**Author:** Eyob
+
+### What changed in `prisma/schema.prisma`
+
+**Advisory:**
+
+| Old | New |
+|-----|-----|
+| `Advisory.id Int @id @default(autoincrement())` | `String @id @default(uuid())` |
+| `Advisory.diseaseId Int` (FK → Disease) | `diseaseType String` (plain string) |
+| `Advisory.language Language` (enum) | `language String` |
+| `Advisory.riskLevel RiskLevel` (enum) | `riskLevel String @default("MODERATE")` |
+| `Disease.advisories Advisory[]` back-relation | Removed |
+
+**Alert:**
+
+| Old | New |
+|-----|-----|
+| `Alert.id Int @id @default(autoincrement())` | `String @id @default(uuid())` |
+| `Alert.regionId Int` + `Alert.districtId Int?` (FKs) | `targetZone String` (plain string) |
+| `Alert.advisoryId Int?` | `String?` (cascades from Advisory.id type change) |
+| `Alert.severity AlertSeverity` (enum) | `severity String` |
+| `Alert.channel AlertChannel` (enum) | `channel String` |
+| `Alert.sentAt DateTime?` | `isDelivered Boolean @default(false)` |
+| `Region.alerts Alert[]` + `District.alerts Alert[]` back-relations | Removed |
+
+---
+
+## 🔴 Action Required — Bereket (Advisory + Alert changes)
+
+### File: `src/services/advisory.service.ts`
+
+#### 1. Remove `Language` and `RiskLevel` from the Prisma import — these are no longer model field types
+
+```typescript
+// ❌ BEFORE
+import { AdvisoryStatus, Language, RiskLevel } from "../../generated/prisma/enums";
+
+// ✅ AFTER
+import { AdvisoryStatus } from "../../generated/prisma/enums";
+// Use plain strings for language and riskLevel validation
+```
+
+#### 2. `toSpecCompatibleAdvisory` — `diseaseType` is now a direct field, not a join
+
+```typescript
+// ❌ BEFORE (broken — no disease relation anymore)
+idString: String(advisory.id),
+diseaseType: advisory.disease?.name ?? null,
+languageString: advisory.language,
+
+// ✅ AFTER — diseaseType is a direct string field
+idString: advisory.id,          // id is already a string UUID
+diseaseType: advisory.diseaseType,
+languageString: advisory.language,
+```
+
+#### 3. `createAdvisory` — remove `diseaseId` FK logic, use `diseaseType` directly
+
+```typescript
+// ❌ BEFORE (broken — no disease FK)
+let resolvedDiseaseId = diseaseId;
+if (!resolvedDiseaseId && diseaseType) {
+  const disease = await prisma.disease.findFirst({ ... });
+  resolvedDiseaseId = disease?.id;
+}
+if (!resolvedDiseaseId || !regionId || !title || !content) { ... }
+prisma.advisory.create({ data: { diseaseId: resolvedDiseaseId, ... } })
+
+// ✅ AFTER — pass diseaseType string directly
+if (!diseaseType || !regionId || !title || !content) { ... }
+prisma.advisory.create({ data: { diseaseType, ... } })
+```
+
+#### 4. `getAllAdvisories` — remove `disease: true` include, update approvedBy select
+
+```typescript
+// ❌ BEFORE (broken — disease relation removed)
+prisma.advisory.findMany({
+  include: { disease: true, region: true, district: true, approvedBy: { select: { fullName: true } } }
+})
+
+// ✅ AFTER
+prisma.advisory.findMany({
+  include: { region: true, district: true, approvedBy: { select: { id: true, username: true, email: true } } }
+})
+```
+
+#### 5. `approveAdvisory` — both params are now `String`
+
+```typescript
+// ❌ BEFORE
+static async approveAdvisory(advisoryId: number, userId: number)
+prisma.advisory.update({ where: { id: advisoryId }, data: { approvedById: userId } })
+
+// ✅ AFTER
+static async approveAdvisory(advisoryId: string, userId: string)
+prisma.advisory.update({ where: { id: advisoryId }, data: { approvedById: userId } })
+```
+
+> Also update `advisory.controller.ts`: `Number(req.params.id)` → `req.params.id`, `req.user!.id` is already a `string`.
+
+---
+
+### File: `src/services/alert.service.ts`
+
+#### 1. Remove `AlertSeverity` and `AlertChannel` from Prisma import — no longer model field types
+
+```typescript
+// ❌ BEFORE
+import { AlertChannel, AlertSeverity } from "../../generated/prisma/enums";
+
+// ✅ AFTER — define valid values locally or use plain string validation
+const VALID_SEVERITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
+const VALID_CHANNELS   = ["WEB", "SMS", "USSD", "EMAIL"] as const;
+```
+
+#### 2. Update `AlertManagementView` and `AlertNotificationDetails` types
+
+```typescript
+// ❌ BEFORE
+type AlertManagementView = { id: number; severity: AlertSeverity; ... }
+type AlertNotificationDetails = { id: number; regionId: number; districtId: number | null; ... }
+
+// ✅ AFTER
+type AlertManagementView = { id: string; severity: string; channel: string; isDelivered: boolean; targetZone: string; ... }
+type AlertNotificationDetails = { id: string; targetZone: string; severity: string; ... }
+```
+
+#### 3. `toAlertManagementView` — `targetZone` and `isDelivered` are now direct fields
+
+```typescript
+// ❌ BEFORE (broken — no region/district relation)
+const targetZone = alert.district?.name ?? alert.region?.name ?? "Unknown";
+return { id: alert.id, idString: String(alert.id), isDelivered: Boolean(alert.sentAt), ... }
+
+// ✅ AFTER
+return {
+  id: alert.id,         // already a string UUID
+  targetZone: alert.targetZone,
+  isDelivered: alert.isDelivered,
+  severity: alert.severity,
+  channel: alert.channel,
+  ...
+}
+```
+
+#### 4. `triggerApprovalNotification` — no regionId/districtId; use `targetZone` for user lookup
+
+```typescript
+// ❌ BEFORE (broken — User has no regionId/districtId fields)
+const recipients = await prisma.user.findMany({
+  where: { isActive: true, ...(alert.districtId ? { districtId: alert.districtId } : { regionId: alert.regionId }) }
+})
+
+// ✅ AFTER — filter users by matching region/assignedDistrict string
+const recipients = await prisma.user.findMany({
+  where: {
+    isActive: true,
+    OR: [
+      { assignedDistrict: alert.targetZone },
+      { region: alert.targetZone },
+    ],
+  },
+  select: { email: true },
+});
+```
+
+#### 5. `approveAlert`, `rejectAlert`, `getAllAlerts` — id is now `String`, remove FK includes
+
+```typescript
+// ❌ BEFORE
+static async approveAlert(alertId: number)
+prisma.alert.findUnique({ where: { id: alertId }, include: { region: true, district: true, disease: true, advisory: true } })
+prisma.alert.update({ where: { id: alertId }, data: { sentAt: new Date() } })
+
+// ✅ AFTER
+static async approveAlert(alertId: string)
+prisma.alert.findUnique({ where: { id: alertId }, include: { disease: true, advisory: true } })
+prisma.alert.update({ where: { id: alertId }, data: { isDelivered: true } })
+```
+
+#### 6. `createAlert` — replace regionId/districtId with targetZone, remove sentAt
+
+```typescript
+// ❌ BEFORE
+static async createAlert(data: { regionId?: number; districtId?: number; advisoryId?: number; sentAt?: string; ... })
+prisma.alert.create({ data: { regionId, districtId, advisoryId, sentAt: isDelivered ? new Date() : ... } })
+
+// ✅ AFTER
+static async createAlert(data: { targetZone: string; advisoryId?: string; isDelivered?: boolean; ... })
+prisma.alert.create({ data: { targetZone, advisoryId, isDelivered: isDelivered ?? false, ... } })
+```
+
+> Also update `alert.controller.ts`: `Number(req.params.id)` → `req.params.id` for all three methods (approveAlert, rejectAlert, and any id-based lookup).
+
+---
+
+## ✅ No Action Required (Advisory + Alert changes)
+
+- `src/controllers/advisory.controller.ts` — only needs the `Number(req.params.id)` → `req.params.id` fix noted above.
+- `src/controllers/alert.controller.ts` — only needs the `Number(req.params.id)` → `req.params.id` fix noted above.
+- `src/routes/advisory.route.ts` — no changes needed.
+- `src/routes/alert.route.ts` — no changes needed.
+
+---
+
 *This file is maintained by Eyob. Add new entries here whenever a schema change affects teammates' files.*

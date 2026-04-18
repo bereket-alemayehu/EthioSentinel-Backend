@@ -69,7 +69,6 @@ model Region {
   primaryLanguage Language   @default(AMHARIC)
   districts       District[]
   advisories      Advisory[]
-  alerts          Alert[]
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 }
@@ -83,7 +82,6 @@ model District {
   longitude  Decimal?        @db.Decimal(9, 6)
   region     Region          @relation(fields: [regionId], references: [id], onDelete: Cascade)
   advisories Advisory[]
-  alerts     Alert[]
   createdAt  DateTime        @default(now())
   updatedAt  DateTime        @updatedAt
 
@@ -118,7 +116,6 @@ model Disease {
   description    String?
   symptomProfile String?
   isActive       Boolean         @default(true)
-  advisories     Advisory[]
   alerts         Alert[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
@@ -147,24 +144,19 @@ model DiseaseReport {
 }
 
 model Advisory {
-  /// Intentional deviation from product spec: keep Int id and normalized disease
-  /// relation (diseaseId) instead of UUID + diseaseType string. This preserves
-  /// referential integrity and analytics joins; services expose compatibility
-  /// fields (diseaseType/idString) for spec-aligned payloads.
-  id              Int            @id @default(autoincrement())
-  diseaseId       Int
+  id              String         @id @default(uuid())
+  diseaseType     String
   regionId        Int
   districtId      Int?
   sourceReportId  String?
   approvedById    String?
   title           String
   content         String
-  language        Language
+  language        String
   status          AdvisoryStatus @default(DRAFT)
-  riskLevel       RiskLevel      @default(MODERATE)
+  riskLevel       String         @default("MODERATE")
   generatedByAI   Boolean        @default(true)
   approvedAt      DateTime?
-  disease         Disease        @relation(fields: [diseaseId], references: [id], onDelete: Cascade)
   region          Region         @relation(fields: [regionId], references: [id], onDelete: Cascade)
   district        District?      @relation(fields: [districtId], references: [id], onDelete: SetNull)
   sourceReport    DiseaseReport? @relation(fields: [sourceReportId], references: [id], onDelete: SetNull)
@@ -173,40 +165,31 @@ model Advisory {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
-  @@index([diseaseId])
   @@index([regionId])
   @@index([districtId])
   @@index([status])
 }
 
 model Alert {
-  /// Intentional deviation from product spec: keep normalized regionId/districtId
-  /// target relations and Int id for data integrity and geo-query efficiency.
-  /// Services map these relations to spec terminology (targetZone, idString,
-  /// severity/channel strings, isDelivered) in API payloads.
-  id            Int           @id @default(autoincrement())
-  regionId      Int
-  districtId    Int?
+  id            String        @id @default(uuid())
+  targetZone    String
   diseaseId     Int?
-  advisoryId    Int?
+  advisoryId    String?
   createdById   String?
   title         String
   message       String
-  severity      AlertSeverity
-  channel       AlertChannel
+  severity      String
+  channel       String
+  isDelivered   Boolean       @default(false)
   deliveryCount Int           @default(0)
   failedCount   Int           @default(0)
-  sentAt        DateTime?
-  region        Region        @relation(fields: [regionId], references: [id], onDelete: Cascade)
-  district      District?     @relation(fields: [districtId], references: [id], onDelete: SetNull)
   disease       Disease?      @relation(fields: [diseaseId], references: [id], onDelete: SetNull)
   advisory      Advisory?     @relation(fields: [advisoryId], references: [id], onDelete: SetNull)
   createdBy     User?         @relation("AlertCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
-  @@index([regionId])
-  @@index([districtId])
+  @@index([targetZone])
   @@index([severity])
   @@index([channel])
 }
