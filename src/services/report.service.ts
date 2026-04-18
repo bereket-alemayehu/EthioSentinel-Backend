@@ -2,11 +2,12 @@ import { prisma } from "../lib/prisma";
 import {
   ReportSource,
   ReportStatus,
-  UserRole,
+  Role,
 } from "../../generated/prisma/enums";
 import { AppError } from "../utils/AppError";
 import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
+import { AIService } from "./ai.service";
 
 type WeeklyReportAggregate = {
   weekStart: string;
@@ -160,7 +161,7 @@ export class ReportService {
     source?: ReportSource;
     status?: ReportStatus;
     notes?: string;
-    user: { id: number; role: UserRole };
+    user: { id: number; role: Role };
   }) {
     const {
       districtId,
@@ -183,29 +184,48 @@ export class ReportService {
     }
 
     const effectiveReporterId =
-      user.role === UserRole.HEW ? user.id : reporterId;
+      user.role === Role.HEW ? user.id : reporterId;
 
     if (!effectiveReporterId) {
       throw new AppError("reporterId is required", 400);
     }
 
-    return prisma.diseaseReport.create({
-      data: {
-        districtId,
-        diseaseId,
-        reporterId: effectiveReporterId,
-        reportDate: new Date(reportDate),
-        caseCount: caseCount ?? 0,
-        deathCount: deathCount ?? 0,
-        source: source ?? ReportSource.PWA_ONLINE,
-        status: status ?? ReportStatus.PENDING,
-        isMortalityPriority: (deathCount ?? 0) > 0,
-        notes,
-      },
-      include: {
-        disease: true,
-        district: true,
-      },
-    });
+    let report;
+    try {
+      report = await prisma.diseaseReport.create({
+        data: {
+          districtId,
+          diseaseId,
+          reporterId: effectiveReporterId,
+          reportDate: new Date(reportDate),
+          caseCount: caseCount ?? 0,
+          deathCount: deathCount ?? 0,
+          source: source ?? ReportSource.PWA_ONLINE,
+          status: status ?? ReportStatus.PENDING,
+          isMortalityPriority: (deathCount ?? 0) > 0,
+          notes,
+        },
+        include: {
+          disease: true,
+          district: true,
+        },
+      });
+    } catch (error: unknown) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        (error as { code?: string }).code === "P2002"
+      ) {
+        throw new AppError(
+          "A report already exists for this district, disease, reporter, and date",
+          409,
+        );
+      }
+      throw error;
+    }
+
+    AIService.enqueueZScoreAnomalyTrigger(report.id);
+    return report;
   }
 }

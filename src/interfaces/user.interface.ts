@@ -1,4 +1,4 @@
-import type { UserRole, Language } from "../../generated/prisma/enums";
+import type { Role, Language } from "../../generated/prisma/enums";
 
 export interface IUser {
   id: number;
@@ -6,7 +6,7 @@ export interface IUser {
   email: string;
   password?: string;
   phoneNumber?: string | null;
-  role: UserRole;
+  role: Role;
   isActive: boolean;
   preferredLanguage: Language;
   regionId?: number | null;

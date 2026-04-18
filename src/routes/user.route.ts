@@ -2,14 +2,14 @@ import { Router } from "express";
 import { UserController } from "../controllers/user.controller";
 import { authenticate } from "../middlewares/authenticate";
 import { authorize } from "../middlewares/authorize";
-import { UserRole } from "../../generated/prisma/enums";
+import { Role } from "../../generated/prisma/enums";
 
 const router = Router();
 
 router.get(
   "/",
   authenticate,
-  authorize(UserRole.ADMIN, UserRole.RESEARCHER),
+  authorize(Role.ADMIN, Role.RESEARCHER),
   UserController.getAllUsers
 );
 

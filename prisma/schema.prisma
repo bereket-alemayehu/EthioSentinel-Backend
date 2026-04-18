@@ -7,7 +7,7 @@ datasource db {
   provider = "postgresql"
 }
 
-enum UserRole {
+enum Role {
   CITIZEN
   HEW
   ADMIN
@@ -16,9 +16,6 @@ enum UserRole {
 
 enum Language {
   AMHARIC
-  AFAAN_OROMOO
-  TIGRINYA
-  SOMALI
   ENGLISH
 }
 
@@ -42,7 +39,6 @@ enum AdvisoryStatus {
   DRAFT
   APPROVED
   REJECTED
-  ARCHIVED
 }
 
 enum RiskLevel {
@@ -104,7 +100,7 @@ model User {
   email              String          @unique
   passwordHash       String
   phoneNumber        String?         @unique
-  role               UserRole
+  role               Role
   isActive           Boolean         @default(true)
   regionId           Int?
   districtId         Int?
