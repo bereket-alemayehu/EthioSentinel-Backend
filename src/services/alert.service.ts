@@ -1,17 +1,20 @@
 import { prisma } from "../lib/prisma";
-import { AlertChannel, AlertSeverity } from "../../generated/prisma/enums";
 import { AppError } from "../utils/AppError";
 import { logger } from "../utils/logger";
 import { EmailSender } from "../utils/EmailSender";
 
+const VALID_SEVERITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
+const VALID_CHANNELS = ["WEB", "SMS", "USSD", "EMAIL"] as const;
+
+type AlertSeverityValue = (typeof VALID_SEVERITIES)[number];
+type AlertChannelValue = (typeof VALID_CHANNELS)[number];
+
 type AlertWorkflowStatus = "Draft" | "Approved";
 
 type AlertManagementView = {
-  id: number;
-  idString: string;
+  id: string;
   disease: string | null;
-  severity: AlertSeverity;
-  severityString: string;
+  severity: string;
   channelString: string;
   advisory: string;
   status: AlertWorkflowStatus;
@@ -20,77 +23,77 @@ type AlertManagementView = {
 };
 
 type AlertNotificationDetails = {
-  id: number;
-  regionId: number;
-  districtId: number | null;
-  severity: AlertSeverity;
+  id: string;
+  targetZone: string;
+  severity: string;
   message: string;
   disease: { name: string } | null;
   advisory: { content: string } | null;
-  region: { name: string };
-  district: { name: string } | null;
 };
 
 export class AlertService {
   private static toAlertManagementView(alert: {
-    id: number;
-    severity: AlertSeverity;
-    channel: AlertChannel;
+    id: string;
+    severity: string;
+    channel: string;
     message: string;
-    sentAt: Date | null;
+    isDelivered: boolean;
+    targetZone: string;
     disease: { name: string } | null;
     advisory: { content: string } | null;
-    region: { name: string } | null;
-    district: { name: string } | null;
   }): AlertManagementView {
-    const targetZone = alert.district?.name ?? alert.region?.name ?? "Unknown";
     return {
       id: alert.id,
-      idString: String(alert.id),
       disease: alert.disease?.name ?? null,
       severity: alert.severity,
-      severityString: alert.severity,
       channelString: alert.channel,
       advisory: alert.advisory?.content ?? alert.message,
-      status: alert.sentAt ? "Approved" : "Draft",
-      targetZone,
-      isDelivered: Boolean(alert.sentAt),
+      status: alert.isDelivered ? "Approved" : "Draft",
+      targetZone: alert.targetZone,
+      isDelivered: alert.isDelivered,
     };
   }
 
-  private static parseEnumValue<T extends string>(
-    value: unknown,
-    enumObject: Record<string, T>,
-    field: string,
-  ): T | undefined {
+  private static parseSeverity(value: unknown): AlertSeverityValue {
     if (value === undefined || value === null || value === "") {
-      return undefined;
+      return "MEDIUM";
     }
     const normalized = String(value).trim().toUpperCase();
-    const allowedValues = Object.values(enumObject);
-    if (!allowedValues.includes(normalized as T)) {
-      throw new AppError(`${field} must be one of: ${allowedValues.join(", ")}`, 400);
+    if (!VALID_SEVERITIES.includes(normalized as AlertSeverityValue)) {
+      throw new AppError(
+        `severity must be one of: ${VALID_SEVERITIES.join(", ")}`,
+        400,
+      );
     }
-    return normalized as T;
+    return normalized as AlertSeverityValue;
+  }
+
+  private static parseChannel(value: unknown): AlertChannelValue {
+    if (value === undefined || value === null || value === "") {
+      return "WEB";
+    }
+    const normalized = String(value).trim().toUpperCase();
+    if (!VALID_CHANNELS.includes(normalized as AlertChannelValue)) {
+      throw new AppError(
+        `channel must be one of: ${VALID_CHANNELS.join(", ")}`,
+        400,
+      );
+    }
+    return normalized as AlertChannelValue;
   }
 
   private static async triggerApprovalNotification(
     alert: AlertNotificationDetails,
   ) {
-    const location = alert.district
-      ? `${alert.district.name}, ${alert.region.name}`
-      : alert.region.name;
-
     const recipients = await prisma.user.findMany({
       where: {
         isActive: true,
-        ...(alert.districtId
-          ? { districtId: alert.districtId }
-          : { regionId: alert.regionId }),
+        OR: [
+          { assignedDistrict: alert.targetZone },
+          { region: alert.targetZone },
+        ],
       },
-      select: {
-        email: true,
-      },
+      select: { email: true },
     });
 
     const emails = recipients
@@ -99,7 +102,7 @@ export class AlertService {
 
     const emailResult = await EmailSender.sendBulkAlertApprovalEmails(emails, {
       disease: alert.disease?.name ?? "Unknown disease",
-      location,
+      location: alert.targetZone,
       advisory: alert.advisory?.content ?? alert.message,
       severity: alert.severity,
     });
@@ -116,7 +119,7 @@ export class AlertService {
       alertId: alert.id,
       disease: alert.disease?.name ?? null,
       severity: alert.severity,
-      location,
+      targetZone: alert.targetZone,
       recipientsAttempted: emailResult.attempted,
       delivered: emailResult.delivered,
       failed: emailResult.failed,
@@ -126,8 +129,6 @@ export class AlertService {
   static async getAllAlerts() {
     const alerts = await prisma.alert.findMany({
       include: {
-        region: true,
-        district: true,
         disease: true,
         advisory: true,
       },
@@ -139,16 +140,14 @@ export class AlertService {
     return alerts.map((alert) => this.toAlertManagementView(alert));
   }
 
-  static async approveAlert(alertId: number) {
-    if (Number.isNaN(alertId)) {
+  static async approveAlert(alertId: string) {
+    if (!alertId) {
       throw new AppError("Invalid alert id", 400);
     }
 
     const existingAlert = await prisma.alert.findUnique({
       where: { id: alertId },
       include: {
-        region: true,
-        district: true,
         disease: true,
         advisory: true,
       },
@@ -160,12 +159,8 @@ export class AlertService {
 
     const updatedAlert = await prisma.alert.update({
       where: { id: alertId },
-      data: {
-        sentAt: new Date(),
-      },
+      data: { isDelivered: true },
       include: {
-        region: true,
-        district: true,
         disease: true,
         advisory: true,
       },
@@ -177,16 +172,14 @@ export class AlertService {
     return managementView;
   }
 
-  static async rejectAlert(alertId: number) {
-    if (Number.isNaN(alertId)) {
+  static async rejectAlert(alertId: string) {
+    if (!alertId) {
       throw new AppError("Invalid alert id", 400);
     }
 
     const existingAlert = await prisma.alert.findUnique({
       where: { id: alertId },
       include: {
-        region: true,
-        district: true,
         disease: true,
         advisory: true,
       },
@@ -199,13 +192,11 @@ export class AlertService {
     const updatedAlert = await prisma.alert.update({
       where: { id: alertId },
       data: {
-        sentAt: null,
+        isDelivered: false,
         deliveryCount: 0,
         failedCount: 0,
       },
       include: {
-        region: true,
-        district: true,
         disease: true,
         advisory: true,
       },
@@ -215,23 +206,18 @@ export class AlertService {
   }
 
   static async createAlert(data: {
-    regionId?: number;
-    districtId?: number;
     targetZone?: string;
     diseaseId?: number;
-    advisoryId?: number;
-    createdById?: number;
+    advisoryId?: string;
+    createdById?: string;
     title?: string;
     message?: string;
-    severity?: AlertSeverity | string;
-    channel?: AlertChannel | string;
+    severity?: string;
+    channel?: string;
     isDelivered?: boolean;
-    sentAt?: string;
-    userId: number;
+    userId: string;
   }) {
     const {
-      regionId,
-      districtId,
       targetZone,
       diseaseId,
       advisoryId,
@@ -241,46 +227,19 @@ export class AlertService {
       severity,
       channel,
       isDelivered,
-      sentAt,
       userId,
     } = data;
 
-    let resolvedRegionId = regionId;
-    let resolvedDistrictId = districtId;
-    if (!resolvedRegionId && targetZone) {
-      const trimmedTargetZone = targetZone.trim();
-      if (trimmedTargetZone) {
-        const district = await prisma.district.findFirst({
-          where: { name: { equals: trimmedTargetZone, mode: "insensitive" } },
-          select: { id: true, regionId: true },
-        });
-        if (district) {
-          resolvedDistrictId = district.id;
-          resolvedRegionId = district.regionId;
-        } else {
-          const region = await prisma.region.findFirst({
-            where: { name: { equals: trimmedTargetZone, mode: "insensitive" } },
-            select: { id: true },
-          });
-          resolvedRegionId = region?.id;
-        }
-      }
-    }
+    const parsedSeverity = this.parseSeverity(severity);
+    const parsedChannel = this.parseChannel(channel);
 
-    const parsedSeverity =
-      this.parseEnumValue(severity, AlertSeverity, "severity") ??
-      AlertSeverity.MEDIUM;
-    const parsedChannel =
-      this.parseEnumValue(channel, AlertChannel, "channel") ?? AlertChannel.WEB;
-
-    if (!resolvedRegionId || !title || !message) {
-      throw new AppError("regionId or targetZone, title and message are required", 400);
+    if (!targetZone || !title || !message) {
+      throw new AppError("targetZone, title and message are required", 400);
     }
 
     const alert = await prisma.alert.create({
       data: {
-        regionId: resolvedRegionId,
-        districtId: resolvedDistrictId,
+        targetZone,
         diseaseId,
         advisoryId,
         createdById: createdById ?? userId,
@@ -288,11 +247,9 @@ export class AlertService {
         message,
         severity: parsedSeverity,
         channel: parsedChannel,
-        sentAt: isDelivered ? new Date() : sentAt ? new Date(sentAt) : undefined,
+        isDelivered: isDelivered ?? false,
       },
       include: {
-        region: true,
-        district: true,
         disease: true,
         advisory: true,
       },

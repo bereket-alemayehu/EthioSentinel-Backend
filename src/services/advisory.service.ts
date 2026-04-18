@@ -2,7 +2,6 @@ import { prisma } from "../lib/prisma";
 import {
   AdvisoryStatus,
   Language,
-  RiskLevel,
 } from "../../generated/prisma/enums";
 import { AppError } from "../utils/AppError";
 
@@ -39,30 +38,8 @@ type SymptomCheckerResult = {
   disclaimer: string;
   language: SupportedLanguage;
 };
-export class AdvisoryService {
-  private static toSpecCompatibleAdvisory<T extends {
-    id: number;
-    language: Language;
-    status: AdvisoryStatus;
-    riskLevel: RiskLevel;
-    disease?: { name: string } | null;
-  }>(advisory: T): T & {
-    idString: string;
-    diseaseType: string | null;
-    languageString: string;
-    statusString: string;
-    riskLevelString: string;
-  } {
-    return {
-      ...advisory,
-      idString: String(advisory.id),
-      diseaseType: advisory.disease?.name ?? null,
-      languageString: advisory.language,
-      statusString: advisory.status,
-      riskLevelString: advisory.riskLevel,
-    };
-  }
 
+export class AdvisoryService {
   private static parseEnumValue<T extends string>(
     value: unknown,
     enumObject: Record<string, T>,
@@ -254,15 +231,14 @@ export class AdvisoryService {
   }
 
   static async getAllAdvisories() {
-    const advisories = await prisma.advisory.findMany({
+    return prisma.advisory.findMany({
       include: {
-        disease: true,
         region: true,
         district: true,
         approvedBy: {
           select: {
             id: true,
-            fullName: true,
+            username: true,
             email: true,
           },
         },
@@ -271,25 +247,22 @@ export class AdvisoryService {
         createdAt: "desc",
       },
     });
-    return advisories.map((advisory) => this.toSpecCompatibleAdvisory(advisory));
   }
 
   static async createAdvisory(data: {
-    diseaseId?: number;
     diseaseType?: string;
     regionId?: number;
     districtId?: number;
-    sourceReportId?: number;
-    approvedById?: number;
+    sourceReportId?: string;
+    approvedById?: string;
     title?: string;
     content?: string;
-    language?: Language;
+    language?: string;
     status?: AdvisoryStatus;
-    riskLevel?: RiskLevel;
+    riskLevel?: string;
     generatedByAI?: boolean;
   }) {
     const {
-      diseaseId,
       diseaseType,
       regionId,
       districtId,
@@ -303,57 +276,42 @@ export class AdvisoryService {
       generatedByAI,
     } = data;
 
-    let resolvedDiseaseId = diseaseId;
-    if (!resolvedDiseaseId && diseaseType) {
-      const disease = await prisma.disease.findFirst({
-        where: {
-          name: { equals: String(diseaseType).trim(), mode: "insensitive" },
-        },
-        select: { id: true },
-      });
-      resolvedDiseaseId = disease?.id;
-    }
-
-    const parsedLanguage =
-      this.parseEnumValue(language, Language, "language") ?? Language.AMHARIC;
-    const parsedRiskLevel =
-      this.parseEnumValue(riskLevel, RiskLevel, "riskLevel") ??
-      RiskLevel.MODERATE;
-    const parsedStatus =
-      this.parseEnumValue(status, AdvisoryStatus, "status") ??
-      AdvisoryStatus.DRAFT;
-
-    if (!resolvedDiseaseId || !regionId || !title || !content) {
+    if (!diseaseType || !regionId || !title || !content) {
       throw new AppError(
-        "diseaseId/diseaseType, regionId, title and content are required",
+        "diseaseType, regionId, title and content are required",
         400,
       );
     }
 
+    const parsedStatus =
+      this.parseEnumValue(status, AdvisoryStatus, "status") ??
+      AdvisoryStatus.DRAFT;
+
     return prisma.advisory.create({
       data: {
-        diseaseId: resolvedDiseaseId,
+        diseaseType,
         regionId,
         districtId,
         sourceReportId,
         approvedById,
         title,
         content,
-        language: parsedLanguage,
+        language: language ?? "AMHARIC",
         status: parsedStatus,
-        riskLevel: parsedRiskLevel,
+        riskLevel: riskLevel ?? "MODERATE",
         generatedByAI: generatedByAI ?? true,
         approvedAt:
           parsedStatus === AdvisoryStatus.APPROVED ? new Date() : undefined,
       },
       include: {
-        disease: true,
+        region: true,
+        district: true,
       },
-    }).then((advisory) => this.toSpecCompatibleAdvisory(advisory));
+    });
   }
 
-  static async approveAdvisory(advisoryId: number, userId: number) {
-    if (Number.isNaN(advisoryId)) {
+  static async approveAdvisory(advisoryId: string, userId: string) {
+    if (!advisoryId) {
       throw new AppError("Invalid advisory id", 400);
     }
 

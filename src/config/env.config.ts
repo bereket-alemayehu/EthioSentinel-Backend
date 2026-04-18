@@ -28,4 +28,5 @@ export const env = cleanEnv(process.env, {
   AI_SERVICE_RETRY_DELAY_MS: num({ default: 1000 }),
   AI_SERVICE_ZSCORE_PATH: str({ default: "/anomaly/zscore" }),
   AI_WEBHOOK_TOKEN: str({ default: "" }),
+  AI_INTERNAL_TOKEN: str({ default: "" }),
 });

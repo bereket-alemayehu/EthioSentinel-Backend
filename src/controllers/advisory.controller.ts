@@ -27,7 +27,7 @@ export class AdvisoryController {
   });
 
   static approveAdvisory = catchAsync(async (req: Request, res: Response) => {
-    const advisoryId = Number(req.params.id);
+    const advisoryId = String(req.params.id);
     const userId = req.user!.id;
     const advisory = await AdvisoryService.approveAdvisory(advisoryId, userId);
     return sendSuccess(res, advisory, "Advisory approved successfully");

@@ -1,9 +1,5 @@
 import { prisma } from "../lib/prisma";
-import {
-  ReportSource,
-  ReportStatus,
-  Role,
-} from "../../generated/prisma/enums";
+import { ReportStatus, Role } from "../../generated/prisma/enums";
 import { AppError } from "../utils/AppError";
 import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
@@ -31,19 +27,19 @@ export class ReportService {
   static async getWeeklyAggregatedReports(): Promise<WeeklyReportAggregate[]> {
     const reports = await prisma.diseaseReport.findMany({
       select: {
-        reportDate: true,
+        timestamp: true,
         caseCount: true,
         deathCount: true,
       },
       orderBy: {
-        reportDate: "asc",
+        timestamp: "asc",
       },
     });
 
     const weeklyMap = new Map<string, WeeklyReportAggregate>();
 
     for (const report of reports) {
-      const weekStartDate = this.getWeekStartUTC(report.reportDate);
+      const weekStartDate = this.getWeekStartUTC(report.timestamp);
       const weekStartKey = weekStartDate.toISOString().slice(0, 10);
 
       if (!weeklyMap.has(weekStartKey)) {
@@ -134,53 +130,46 @@ export class ReportService {
   static async getAllReports() {
     return prisma.diseaseReport.findMany({
       include: {
-        disease: true,
-        district: true,
         reporter: {
           select: {
             id: true,
-            fullName: true,
+            username: true,
             email: true,
             role: true,
           },
         },
       },
       orderBy: {
-        reportDate: "desc",
+        timestamp: "desc",
       },
     });
   }
 
   static async createReport(data: {
-    districtId?: number;
-    diseaseId?: number;
-    reporterId?: number;
-    reportDate?: string;
+    district?: string;
+    diseaseType?: string;
+    reporterId?: string;
     caseCount?: number;
     deathCount?: number;
-    source?: ReportSource;
+    isOfflineCached?: boolean;
     status?: ReportStatus;
     notes?: string;
-    user: { id: number; role: Role };
+    user: { id: string; role: Role };
   }) {
     const {
-      districtId,
-      diseaseId,
+      district,
+      diseaseType,
       reporterId,
-      reportDate,
       caseCount,
       deathCount,
-      source,
+      isOfflineCached,
       status,
       notes,
       user,
     } = data;
 
-    if (!districtId || !diseaseId || !reportDate) {
-      throw new AppError(
-        "districtId, diseaseId and reportDate are required",
-        400,
-      );
+    if (!district || !diseaseType) {
+      throw new AppError("district and diseaseType are required", 400);
     }
 
     const effectiveReporterId =
@@ -194,20 +183,25 @@ export class ReportService {
     try {
       report = await prisma.diseaseReport.create({
         data: {
-          districtId,
-          diseaseId,
+          district,
+          diseaseType,
           reporterId: effectiveReporterId,
-          reportDate: new Date(reportDate),
           caseCount: caseCount ?? 0,
           deathCount: deathCount ?? 0,
-          source: source ?? ReportSource.PWA_ONLINE,
+          isOfflineCached: isOfflineCached ?? false,
           status: status ?? ReportStatus.PENDING,
           isMortalityPriority: (deathCount ?? 0) > 0,
           notes,
         },
         include: {
-          disease: true,
-          district: true,
+          reporter: {
+            select: {
+              id: true,
+              username: true,
+              email: true,
+              role: true,
+            },
+          },
         },
       });
     } catch (error: unknown) {
