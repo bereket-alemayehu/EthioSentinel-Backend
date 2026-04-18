@@ -4,6 +4,9 @@ import { AppError } from "../utils/AppError";
 import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
 import { AIService } from "./ai.service";
+import { AlertService } from "./alert.service";
+import { logger } from "../utils/logger";
+import { validateAndSanitizeReport } from "../validations/report.validation";
 
 type WeeklyReportAggregate = {
   weekStart: string;
@@ -134,8 +137,8 @@ export class ReportService {
           select: {
             id: true,
             username: true,
-            email: true,
             role: true,
+            // BR-01: email omitted from list output to avoid PII exposure
           },
         },
       },
@@ -168,9 +171,8 @@ export class ReportService {
       user,
     } = data;
 
-    if (!district || !diseaseType) {
-      throw new AppError("district and diseaseType are required", 400);
-    }
+    // BR-01: validate and sanitize input (strips PII from notes, validates counts)
+    const sanitized = validateAndSanitizeReport({ district, diseaseType, caseCount, deathCount, notes, isOfflineCached });
 
     const effectiveReporterId =
       user.role === Role.HEW ? user.id : reporterId;
@@ -183,22 +185,21 @@ export class ReportService {
     try {
       report = await prisma.diseaseReport.create({
         data: {
-          district,
-          diseaseType,
+          district: sanitized.district,
+          diseaseType: sanitized.diseaseType,
           reporterId: effectiveReporterId,
-          caseCount: caseCount ?? 0,
-          deathCount: deathCount ?? 0,
-          isOfflineCached: isOfflineCached ?? false,
+          caseCount: sanitized.caseCount,
+          deathCount: sanitized.deathCount,
+          isOfflineCached: sanitized.isOfflineCached,
           status: status ?? ReportStatus.PENDING,
-          isMortalityPriority: (deathCount ?? 0) > 0,
-          notes,
+          isMortalityPriority: sanitized.deathCount > 0,
+          notes: sanitized.notes,
         },
         include: {
           reporter: {
             select: {
               id: true,
               username: true,
-              email: true,
               role: true,
             },
           },
@@ -220,6 +221,22 @@ export class ReportService {
     }
 
     AIService.enqueueZScoreAnomalyTrigger(report.id);
+
+    // BR-03: fire-and-forget mortality threshold check
+    setImmediate(async () => {
+      try {
+        await AlertService.checkAndCreateCriticalMortalityAlert(
+          report.diseaseType,
+          report.district,
+        );
+      } catch (err) {
+        logger.error("BR-03 mortality threshold check failed", {
+          reportId: report.id,
+          err,
+        });
+      }
+    });
+
     return report;
   }
 }

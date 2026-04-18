@@ -9,7 +9,7 @@ import { logger } from "../utils/logger";
 export class AIController {
   static triggerZScoreForReport = catchAsync(
     async (req: Request, res: Response) => {
-      const { reportId } = req.params;
+      const reportId = String(req.params.reportId);
       if (!reportId) {
         throw new AppError("Invalid report id", 400);
       }

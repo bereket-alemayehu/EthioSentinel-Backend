@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { ReportService } from "../services/report.service";
+import { ReportSyncService } from "../services/report-sync.service";
 import { catchAsync } from "../utils/catchAsync";
 import { sendSuccess } from "../utils/response.util";
 
@@ -51,5 +52,13 @@ export class ReportController {
     };
     const report = await ReportService.createReport(reportData);
     return sendSuccess(res, report, "Report created successfully", 201);
+  });
+
+  static syncOfflineBatch = catchAsync(async (req: Request, res: Response) => {
+    const result = await ReportSyncService.syncOfflineBatch(
+      req.body.reports,
+      req.user!,
+    );
+    return sendSuccess(res, result, "Offline sync completed", 207);
   });
 }
