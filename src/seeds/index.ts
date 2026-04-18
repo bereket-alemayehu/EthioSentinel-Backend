@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma";
-import bcrypt from "bcryptjs";
+import { hashPassword } from "../utils/password.util";
+import { env } from "../config/env.config";
 
 async function main() {
   console.log("Seeding database...");
@@ -27,7 +28,7 @@ async function main() {
   });
 
   // 3. Create Admin User
-  const passwordHash = await bcrypt.hash("Admin@12345", 10);
+  const passwordHash = await hashPassword(env.SEED_ADMIN_PASSWORD);
   await prisma.user.upsert({
     where: { email: "admin@ethiosentinel.org" },
     update: {},
