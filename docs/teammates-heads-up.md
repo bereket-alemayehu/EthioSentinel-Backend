@@ -117,12 +117,131 @@ const recipients = await prisma.user.findMany({
 
 ---
 
-## ✅ No Action Required
+## ✅ No Action Required (User change)
 
 - `src/controllers/report.controller.ts` — passes `req.body` + `req.user` through; no direct field references to fix.
 - `src/controllers/alert.controller.ts` — no direct User field access.
 - `src/controllers/advisory.controller.ts` — no direct User field access.
 - `src/routes/*.ts` — all already updated to use `Role` (not `UserRole`).
+
+---
+
+## 📋 Change: DiseaseReport model — UUID id, plain string district/diseaseType, timestamp, isOfflineCached
+
+**Branch:** `feature/prisma-schema-group1-enums-models`
+**Date:** 2026-04-15
+**Author:** Eyob
+
+### What changed in `prisma/schema.prisma`
+
+| Old | New |
+|-----|-----|
+| `DiseaseReport.id Int @id @default(autoincrement())` | `String @id @default(uuid())` |
+| `DiseaseReport.districtId Int` (FK → District) | `district String` (plain string) |
+| `DiseaseReport.diseaseId Int` (FK → Disease) | `diseaseType String` (plain string) |
+| `DiseaseReport.reportDate DateTime` | `timestamp DateTime @default(now())` |
+| `DiseaseReport.source ReportSource` | `isOfflineCached Boolean @default(false)` |
+| `Advisory.sourceReportId Int?` | `String?` (FK type follows DiseaseReport.id) |
+| `District.reports DiseaseReport[]` | Removed (no FK pointing back) |
+| `Disease.reports DiseaseReport[]` | Removed (no FK pointing back) |
+
+---
+
+## 🔴 Action Required — Estif (DiseaseReport change)
+
+**File:** `src/services/report.service.ts`
+
+### 1. `createReport` — replace FK integer params with plain string params
+
+```typescript
+// ❌ BEFORE (broken)
+static async createReport(data: {
+  districtId?: number;
+  diseaseId?: number;
+  reporterId?: number;
+  reportDate?: string;
+  source?: ReportSource;
+  ...
+})
+
+// ✅ AFTER
+static async createReport(data: {
+  district?: string;
+  diseaseType?: string;
+  reporterId?: string;
+  // timestamp auto-generates — no need to pass it
+  isOfflineCached?: boolean;
+  ...
+})
+```
+
+### 2. `createReport` — update validation and Prisma create call
+
+```typescript
+// ❌ BEFORE (broken)
+if (!districtId || !diseaseId || !reportDate) { ... }
+
+prisma.diseaseReport.create({
+  data: {
+    districtId,
+    diseaseId,
+    reportDate: new Date(reportDate),
+    source: source ?? ReportSource.PWA_ONLINE,
+    ...
+  },
+  include: { disease: true, district: true },  // ← can't include FK relations anymore
+})
+
+// ✅ AFTER
+if (!district || !diseaseType) { ... }
+
+prisma.diseaseReport.create({
+  data: {
+    district,
+    diseaseType,
+    isOfflineCached: isOfflineCached ?? false,
+    ...
+  },
+  // remove include: { disease, district } — no FK relations anymore
+})
+```
+
+### 3. `getAllReports` — remove FK includes and fix orderBy field
+
+```typescript
+// ❌ BEFORE (broken)
+prisma.diseaseReport.findMany({
+  include: { disease: true, district: true, reporter: { select: { fullName: true, ... } } },
+  orderBy: { reportDate: "desc" },
+})
+
+// ✅ AFTER
+prisma.diseaseReport.findMany({
+  include: { reporter: { select: { username: true, email: true, role: true } } },
+  orderBy: { timestamp: "desc" },
+})
+```
+
+### 4. `getWeeklyAggregatedReports` — rename `reportDate` to `timestamp`
+
+```typescript
+// ❌ BEFORE (broken)
+select: { reportDate: true, caseCount: true, deathCount: true }
+const weekStartDate = this.getWeekStartUTC(report.reportDate);
+
+// ✅ AFTER
+select: { timestamp: true, caseCount: true, deathCount: true }
+const weekStartDate = this.getWeekStartUTC(report.timestamp);
+```
+
+> Also remove `ReportSource` from the import — it no longer exists in the schema.
+
+---
+
+## ✅ No Action Required (DiseaseReport change)
+
+- `src/controllers/report.controller.ts` — passes `req.body` through unchanged.
+- Advisory and Alert services — `sourceReportId` type change is handled in schema only.
 
 ---
 
