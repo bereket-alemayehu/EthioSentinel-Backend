@@ -458,4 +458,80 @@ prisma.alert.create({ data: { targetZone, advisoryId, isDelivered: isDelivered ?
 
 ---
 
+---
+
+## 📋 Change: RBAC — Strict Role Enforcement (Group 3)
+
+**Branch:** `feature/rbac-access-control-group3`
+**Date:** 2026-04-15
+**Author:** Eyob
+
+### Role policy (authoritative definition in `src/middlewares/authorize.ts`)
+
+| Role | Allowed | Never allowed |
+|---|---|---|
+| `CITIZEN` | Public/unauthenticated endpoints only | Never in an `authorize()` tuple |
+| `HEW` | Submit reports, read district-scoped reports | No advisory, alert, or user management |
+| `ADMIN` | Everything | — |
+| `RESEARCHER` | Read-only analytics (GET reports, alerts, advisories, users) | All mutation endpoints (POST / PATCH / PUT / DELETE) |
+
+---
+
+## 🔴 Action Required — Bereket (RBAC)
+
+### File: `src/routes/advisory.route.ts`
+
+#### 1. `POST /generate` is currently unprotected — any internet caller can trigger it
+
+```typescript
+// ❌ BEFORE (broken — no auth, open to abuse)
+router.post("/generate", AdvisoryController.generateAdvisoryText);
+
+// ✅ AFTER — HEW and ADMIN can trigger advisory generation
+router.post(
+  "/generate",
+  authenticate,
+  authorize(Role.ADMIN, Role.HEW),
+  AdvisoryController.generateAdvisoryText,
+);
+```
+
+> Make sure `Role` is already imported (it should be from the earlier Task 1 fix).
+
+---
+
+### File: `src/routes/alert.route.ts`
+
+#### 2. `GET /` is restricted to ADMIN only — spec says RESEARCHER gets read-only analytics access
+
+```typescript
+// ❌ BEFORE (too restrictive for RESEARCHER)
+router.get(
+  "/",
+  authenticate,
+  authorize(Role.ADMIN),
+  AlertController.getAllAlerts,
+);
+
+// ✅ AFTER — RESEARCHER can read alerts for analytics
+router.get(
+  "/",
+  authenticate,
+  authorize(Role.ADMIN, Role.RESEARCHER),
+  AlertController.getAllAlerts,
+);
+```
+
+---
+
+## ✅ No Action Required — Estif (RBAC)
+
+`src/routes/report.route.ts` tuples are already correct:
+- `GET /` and `GET /weekly` → `ADMIN, HEW, RESEARCHER` ✅
+- `POST /` → `ADMIN, HEW` ✅
+
+No changes needed.
+
+---
+
 *This file is maintained by Eyob. Add new entries here whenever a schema change affects teammates' files.*
