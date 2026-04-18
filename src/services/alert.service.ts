@@ -1,4 +1,5 @@
 import { prisma } from "../lib/prisma";
+import { AdvisoryStatus } from "../../generated/prisma/enums";
 import { AppError } from "../utils/AppError";
 import { logger } from "../utils/logger";
 import { EmailSender } from "../utils/EmailSender";
@@ -149,12 +150,20 @@ export class AlertService {
       where: { id: alertId },
       include: {
         disease: true,
-        advisory: true,
+        advisory: { select: { id: true, status: true, content: true } },
       },
     });
 
     if (!existingAlert) {
       throw new AppError("Alert not found", 404);
+    }
+
+    // BR-02: block broadcast if the linked advisory is not yet APPROVED
+    if (existingAlert.advisory && existingAlert.advisory.status !== AdvisoryStatus.APPROVED) {
+      throw new AppError(
+        "Cannot approve alert: linked advisory must be APPROVED before broadcast",
+        422,
+      );
     }
 
     const updatedAlert = await prisma.alert.update({
@@ -237,6 +246,23 @@ export class AlertService {
       throw new AppError("targetZone, title and message are required", 400);
     }
 
+    // BR-02: if an advisory is linked, it must be APPROVED before the alert can be created
+    if (advisoryId) {
+      const linkedAdvisory = await prisma.advisory.findUnique({
+        where: { id: advisoryId },
+        select: { status: true },
+      });
+      if (!linkedAdvisory) {
+        throw new AppError("Linked advisory not found", 404);
+      }
+      if (linkedAdvisory.status !== AdvisoryStatus.APPROVED) {
+        throw new AppError(
+          "Cannot create alert: linked advisory must be APPROVED first",
+          422,
+        );
+      }
+    }
+
     const alert = await prisma.alert.create({
       data: {
         targetZone,
@@ -256,5 +282,85 @@ export class AlertService {
     });
 
     return this.toAlertManagementView(alert);
+  }
+
+  /**
+   * BR-03: Called by Estif's report.service.ts after a new report is persisted.
+   * Checks if deaths/cases in the last 24h for the given district+diseaseType
+   * exceed the 10% mortality threshold. If so, creates a CRITICAL alert and
+   * notifies all ADMIN users.
+   */
+  static async checkAndCreateCriticalMortalityAlert(
+    diseaseType: string,
+    district: string,
+  ): Promise<void> {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const reports = await prisma.diseaseReport.findMany({
+      where: {
+        diseaseType,
+        district,
+        timestamp: { gte: since },
+      },
+      select: { caseCount: true, deathCount: true },
+    });
+
+    if (reports.length === 0) return;
+
+    const totalCases = reports.reduce((sum, r) => sum + r.caseCount, 0);
+    const totalDeaths = reports.reduce((sum, r) => sum + r.deathCount, 0);
+
+    if (totalCases === 0) return;
+
+    const mortalityRate = totalDeaths / totalCases;
+    if (mortalityRate <= 0.1) return;
+
+    const title = `CRITICAL: ${diseaseType} mortality rate exceeded 10% in ${district}`;
+    const message =
+      `In the last 24 hours, ${district} reported ${totalDeaths} deaths out of ` +
+      `${totalCases} ${diseaseType} cases (${(mortalityRate * 100).toFixed(1)}% mortality rate). ` +
+      `Immediate response required.`;
+
+    const alert = await prisma.alert.create({
+      data: {
+        targetZone: district,
+        title,
+        message,
+        severity: "CRITICAL",
+        channel: "EMAIL",
+        isDelivered: false,
+      },
+    });
+
+    logger.warn("BR-03 critical mortality threshold exceeded", {
+      alertId: alert.id,
+      diseaseType,
+      district,
+      totalCases,
+      totalDeaths,
+      mortalityRate: `${(mortalityRate * 100).toFixed(1)}%`,
+    });
+
+    const adminEmails = await prisma.user.findMany({
+      where: { role: "ADMIN", isActive: true },
+      select: { email: true },
+    });
+
+    const emails = adminEmails.map((u) => u.email).filter(Boolean);
+
+    const emailResult = await EmailSender.sendBulkAlertApprovalEmails(emails, {
+      disease: diseaseType,
+      location: district,
+      advisory: message,
+      severity: "CRITICAL",
+    });
+
+    await prisma.alert.update({
+      where: { id: alert.id },
+      data: {
+        deliveryCount: emailResult.delivered,
+        failedCount: emailResult.failed,
+      },
+    });
   }
 }

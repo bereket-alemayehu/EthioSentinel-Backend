@@ -279,7 +279,7 @@ const weekStartDate = this.getWeekStartUTC(report.timestamp);
 
 ---
 
-## 🔴 Action Required — Bereket (Advisory + Alert changes)
+## ✅ COMPLETED — Bereket (Advisory + Alert schema fixes applied by Eyob)
 
 ### File: `src/services/advisory.service.ts`
 
@@ -477,7 +477,7 @@ prisma.alert.create({ data: { targetZone, advisoryId, isDelivered: isDelivered ?
 
 ---
 
-## 🔴 Action Required — Bereket (RBAC)
+## ✅ COMPLETED — Bereket (RBAC route fixes applied by Eyob)
 
 ### File: `src/routes/advisory.route.ts`
 
@@ -531,6 +531,55 @@ router.get(
 - `POST /` → `ADMIN, HEW` ✅
 
 No changes needed.
+
+---
+
+---
+
+## 📋 New: BR-03 Critical Mortality Alert Hook
+
+**Branch:** `feature/berekets-tasks`
+**Date:** 2026-04-15
+**Author:** Eyob
+
+### What was added
+
+`AlertService.checkAndCreateCriticalMortalityAlert(diseaseType, district)` is now implemented in `src/services/alert.service.ts`.
+
+It:
+1. Queries the last 24 h of reports for the given `district` + `diseaseType`
+2. If deaths/cases > 10%, creates a `CRITICAL` severity `Alert` and emails all active `ADMIN` users
+3. Logs a structured warning with alert ID, rate, and zone
+
+---
+
+## 🔴 Action Required — Estif (BR-03 hook)
+
+**File:** `src/services/report.service.ts`
+
+After `AIService.enqueueZScoreAnomalyTrigger(report.id)`, add a fire-and-forget call to the mortality threshold checker:
+
+```typescript
+// ✅ ADD after line: AIService.enqueueZScoreAnomalyTrigger(report.id);
+setImmediate(async () => {
+  try {
+    await AlertService.checkAndCreateCriticalMortalityAlert(
+      report.diseaseType,
+      report.district,
+    );
+  } catch (err) {
+    logger.error("BR-03 mortality check failed", { reportId: report.id, err });
+  }
+});
+```
+
+Also add the import at the top of `report.service.ts`:
+
+```typescript
+import { AlertService } from "./alert.service";
+```
+
+> Keep it fire-and-forget with `setImmediate` — same pattern as the AI anomaly trigger. Do NOT await it in the request path.
 
 ---
 

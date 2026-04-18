@@ -232,6 +232,9 @@ export class AdvisoryService {
 
   static async getAllAdvisories() {
     return prisma.advisory.findMany({
+      where: {
+        status: AdvisoryStatus.APPROVED,
+      },
       include: {
         region: true,
         district: true,
@@ -246,6 +249,48 @@ export class AdvisoryService {
       orderBy: {
         createdAt: "desc",
       },
+    });
+  }
+
+  static async getAdvisoryDrafts(page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+
+    const [drafts, total] = await Promise.all([
+      prisma.advisory.findMany({
+        where: { status: AdvisoryStatus.DRAFT },
+        include: {
+          region: true,
+          district: true,
+          sourceReport: {
+            select: { id: true, diseaseType: true, district: true, timestamp: true },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.advisory.count({ where: { status: AdvisoryStatus.DRAFT } }),
+    ]);
+
+    return {
+      data: drafts,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  static async rejectAdvisory(advisoryId: string) {
+    if (!advisoryId) {
+      throw new AppError("Invalid advisory id", 400);
+    }
+
+    return prisma.advisory.update({
+      where: { id: advisoryId },
+      data: { status: AdvisoryStatus.REJECTED },
     });
   }
 
