@@ -32,12 +32,13 @@ async function main() {
     where: { email: "admin@ethiosentinel.org" },
     update: {},
     create: {
-      fullName: "System Admin",
+      username: "system_admin",
       email: "admin@ethiosentinel.org",
       passwordHash,
       role: "ADMIN",
       isActive: true,
-      regionId: addisAbaba.id,
+      region: addisAbaba.name,
+      clearanceLevel: 5,
     },
   });
 

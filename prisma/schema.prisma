@@ -68,7 +68,6 @@ model Region {
   code            String     @unique
   primaryLanguage Language   @default(AMHARIC)
   districts       District[]
-  users           User[]
   advisories      Advisory[]
   alerts          Alert[]
   createdAt       DateTime   @default(now())
@@ -83,7 +82,6 @@ model District {
   latitude   Decimal?        @db.Decimal(9, 6)
   longitude  Decimal?        @db.Decimal(9, 6)
   region     Region          @relation(fields: [regionId], references: [id], onDelete: Cascade)
-  users      User[]
   reports    DiseaseReport[]
   advisories Advisory[]
   alerts     Alert[]
@@ -95,26 +93,23 @@ model District {
 }
 
 model User {
-  id                 Int             @id @default(autoincrement())
-  fullName           String
-  email              String          @unique
-  passwordHash       String
-  phoneNumber        String?         @unique
-  role               Role
-  isActive           Boolean         @default(true)
-  regionId           Int?
-  districtId         Int?
-  region             Region?         @relation(fields: [regionId], references: [id], onDelete: SetNull)
-  district           District?       @relation(fields: [districtId], references: [id], onDelete: SetNull)
+  id               String          @id @default(uuid())
+  username         String
+  email            String          @unique
+  passwordHash     String
+  phoneNumber      String?         @unique
+  role             Role
+  isActive         Boolean         @default(true)
+  region           String
+  assignedDistrict String?
+  clearanceLevel   Int?
   submittedReports   DiseaseReport[] @relation("ReportSubmittedBy")
   approvedAdvisories Advisory[]      @relation("AdvisoryApprovedBy")
   createdAlerts      Alert[]         @relation("AlertCreatedBy")
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
   @@index([role])
-  @@index([regionId])
-  @@index([districtId])
 }
 
 model Disease {
@@ -135,7 +130,7 @@ model DiseaseReport {
   id                  Int          @id @default(autoincrement())
   districtId          Int
   diseaseId           Int
-  reporterId          Int
+  reporterId          String
   reportDate          DateTime
   caseCount           Int          @default(0)
   deathCount          Int          @default(0)
@@ -166,7 +161,7 @@ model Advisory {
   regionId        Int
   districtId      Int?
   sourceReportId  Int?
-  approvedById    Int?
+  approvedById    String?
   title           String
   content         String
   language        Language
@@ -199,7 +194,7 @@ model Alert {
   districtId    Int?
   diseaseId     Int?
   advisoryId    Int?
-  createdById   Int?
+  createdById   String?
   title         String
   message       String
   severity      AlertSeverity

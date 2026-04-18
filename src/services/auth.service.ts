@@ -33,27 +33,28 @@ export class AuthService {
       accessToken,
       user: {
         id: user.id,
-        fullName: user.fullName,
+        username: user.username,
         email: user.email,
         role: user.role,
-        regionId: user.regionId,
-        districtId: user.districtId,
+        region: user.region,
+        assignedDistrict: user.assignedDistrict,
       },
     };
   }
 
-  static async getMe(userId: number) {
+  static async getMe(userId: string) {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
         id: true,
-        fullName: true,
+        username: true,
         email: true,
         phoneNumber: true,
         role: true,
         isActive: true,
-        regionId: true,
-        districtId: true,
+        region: true,
+        assignedDistrict: true,
+        clearanceLevel: true,
         createdAt: true,
       },
     });

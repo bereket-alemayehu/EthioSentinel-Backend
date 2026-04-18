@@ -1,7 +1,7 @@
 import type { Role } from "../../generated/prisma/enums";
 
 export interface ITokenPayload {
-  id: number;
+  id: string;
   role: Role;
   email: string;
   iat?: number;
@@ -15,9 +15,11 @@ export interface IToken {
 export interface ILoginResponse {
   accessToken: string;
   user: {
-    id: number;
-    fullName: string;
+    id: string;
+    username: string;
     email: string;
     role: Role;
+    region: string;
+    assignedDistrict: string | null;
   };
 }
