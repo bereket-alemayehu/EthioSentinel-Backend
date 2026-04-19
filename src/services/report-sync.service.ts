@@ -2,7 +2,7 @@ import { prisma } from "../lib/prisma";
 import { ReportStatus, Role } from "../../generated/prisma/enums";
 import { AIService } from "./ai.service";
 import { AlertService } from "./alert.service";
-import { logger } from "../utils/logger";
+import Logger from "../utils/logger";
 import { validateAndSanitizeReport } from "../validations/report.validation";
 import { AppError } from "../utils/AppError";
 
@@ -100,7 +100,7 @@ export class ReportSyncService {
       ),
     );
 
-    logger.info("Offline sync batch persisted", {
+    Logger.info("Offline sync batch persisted", {
       userId: user.id,
       accepted: createdReports.length,
       rejected: errors.length,
@@ -118,7 +118,7 @@ export class ReportSyncService {
             report.district,
           );
         } catch (err) {
-          logger.error("BR-03 check failed during sync", { reportId: report.id, err });
+          Logger.error("BR-03 check failed during sync", { reportId: report.id, err });
         }
       });
     }

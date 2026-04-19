@@ -1,12 +1,12 @@
 import nodemailer from "nodemailer";
 import { env } from "../config/env.config";
-import { logger } from "./logger";
+import Logger from "./logger";
 
 type AlertApprovalEmailPayload = {
   disease: string;
   location: string;
   advisory: string;
-  severity: string;
+  severity: string; 
 };
 
 export class EmailSender {
@@ -45,7 +45,7 @@ export class EmailSender {
     const transporter = this.getTransporter();
 
     if (!transporter) {
-      logger.warn("SMTP not configured; skipping email delivery", {
+      Logger.warn("SMTP not configured; skipping email delivery", {
         to,
         subject,
         template,
@@ -92,7 +92,7 @@ export class EmailSender {
 
     const transporter = this.getTransporter();
     if (!transporter) {
-      logger.warn("SMTP not configured; bulk alert emails skipped", {
+      Logger.warn("SMTP not configured; bulk alert emails skipped", {
         recipients: uniqueRecipients.length,
       });
       return {

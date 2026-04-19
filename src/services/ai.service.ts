@@ -3,7 +3,7 @@ import https from "https";
 import { URL } from "url";
 import { prisma } from "../lib/prisma";
 import { env } from "../config/env.config";
-import { logger } from "../utils/logger";
+import logger from "../utils/logger";
 
 type WeeklyAggregate = {
   weekStart: string;

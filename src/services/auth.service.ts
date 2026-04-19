@@ -3,6 +3,7 @@ import { comparePassword } from "../utils/password.util";
 import { signAccessToken } from "../utils/token.util";
 import { AppError } from "../utils/AppError";
 
+
 export class AuthService {
   static async login(email?: string, password?: string) {
     if (!email || !password) {

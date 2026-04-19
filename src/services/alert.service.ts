@@ -1,7 +1,7 @@
 import { prisma } from "../lib/prisma";
 import { AdvisoryStatus } from "../../generated/prisma/enums";
 import { AppError } from "../utils/AppError";
-import { logger } from "../utils/logger";
+import logger from "../utils/logger";
 import { EmailSender } from "../utils/EmailSender";
 
 const VALID_SEVERITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;

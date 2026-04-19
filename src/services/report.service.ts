@@ -5,7 +5,7 @@ import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
 import { AIService } from "./ai.service";
 import { AlertService } from "./alert.service";
-import { logger } from "../utils/logger";
+import Logger from "../utils/logger";
 import { validateAndSanitizeReport } from "../validations/report.validation";
 
 type WeeklyReportAggregate = {
@@ -78,7 +78,7 @@ export class ReportService {
 
       doc.on("data", (chunk: Buffer) => chunks.push(chunk));
       doc.on("end", () => resolve(Buffer.concat(chunks)));
-      doc.on("error", (error) => reject(error));
+      doc.on("error", (error: Error) => reject(error));
 
       doc
         .fontSize(18)
@@ -230,7 +230,7 @@ export class ReportService {
           report.district,
         );
       } catch (err) {
-        logger.error("BR-03 mortality threshold check failed", {
+        Logger.error("BR-03 mortality threshold check failed", {
           reportId: report.id,
           err,
         });

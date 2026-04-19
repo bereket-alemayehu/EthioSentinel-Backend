@@ -4,7 +4,7 @@ import { catchAsync } from "../utils/catchAsync";
 import { sendSuccess } from "../utils/response.util";
 import { env } from "../config/env.config";
 import { AppError } from "../utils/AppError";
-import { logger } from "../utils/logger";
+import Logger from "../utils/logger";
 
 export class AIController {
   static triggerZScoreForReport = catchAsync(
@@ -35,7 +35,7 @@ export class AIController {
       }
     }
 
-    logger.info("AI webhook payload received", req.body);
+    Logger.info("AI webhook payload received", req.body);
 
     return sendSuccess(
       res,
