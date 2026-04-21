@@ -38,3 +38,18 @@
  *       200:
  *         description: Logged out successfully
  */
+
+/**
+ * @swagger
+ * /auth/me:
+ *   get:
+ *     summary: Get the authenticated user's profile
+ *     tags: [Auth]
+ *     security:
+ *       - cookieAuth: []
+ *     responses:
+ *       200:
+ *         description: User profile retrieved
+ *       401:
+ *         description: Unauthorized
+ */
