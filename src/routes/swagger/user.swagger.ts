@@ -7,24 +7,9 @@
 
 /**
  * @swagger
- * /users/me:
- *   get:
- *     summary: Get current user profile
- *     tags: [Users]
- *     security:
- *       - cookieAuth: []
- *     responses:
- *       200:
- *         description: User profile retrieved
- *       401:
- *         description: Unauthorized
- */
-
-/**
- * @swagger
  * /users:
  *   get:
- *     summary: Get all users
+ *     summary: Get all users (ADMIN, RESEARCHER)
  *     tags: [Users]
  *     security:
  *       - cookieAuth: []
@@ -33,4 +18,23 @@
  *         description: Users retrieved successfully
  *       401:
  *         description: Unauthorized
+ *       403:
+ *         description: Forbidden
+ */
+
+/**
+ * @swagger
+ * /admin/users:
+ *   get:
+ *     summary: Get all users — admin-only view (ADMIN)
+ *     tags: [Users]
+ *     security:
+ *       - cookieAuth: []
+ *     responses:
+ *       200:
+ *         description: Users retrieved successfully
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden
  */

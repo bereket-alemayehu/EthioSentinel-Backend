@@ -68,9 +68,7 @@ model Region {
   code            String     @unique
   primaryLanguage Language   @default(AMHARIC)
   districts       District[]
-  users           User[]
   advisories      Advisory[]
-  alerts          Alert[]
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 }
@@ -83,10 +81,7 @@ model District {
   latitude   Decimal?        @db.Decimal(9, 6)
   longitude  Decimal?        @db.Decimal(9, 6)
   region     Region          @relation(fields: [regionId], references: [id], onDelete: Cascade)
-  users      User[]
-  reports    DiseaseReport[]
   advisories Advisory[]
-  alerts     Alert[]
   createdAt  DateTime        @default(now())
   updatedAt  DateTime        @updatedAt
 
@@ -95,26 +90,23 @@ model District {
 }
 
 model User {
-  id                 Int             @id @default(autoincrement())
-  fullName           String
-  email              String          @unique
-  passwordHash       String
-  phoneNumber        String?         @unique
-  role               Role
-  isActive           Boolean         @default(true)
-  regionId           Int?
-  districtId         Int?
-  region             Region?         @relation(fields: [regionId], references: [id], onDelete: SetNull)
-  district           District?       @relation(fields: [districtId], references: [id], onDelete: SetNull)
+  id               String          @id @default(uuid())
+  username         String
+  email            String          @unique
+  passwordHash     String
+  phoneNumber      String?         @unique
+  role             Role
+  isActive         Boolean         @default(true)
+  region           String
+  assignedDistrict String?
+  clearanceLevel   Int?
   submittedReports   DiseaseReport[] @relation("ReportSubmittedBy")
   approvedAdvisories Advisory[]      @relation("AdvisoryApprovedBy")
   createdAlerts      Alert[]         @relation("AlertCreatedBy")
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
   @@index([role])
-  @@index([regionId])
-  @@index([districtId])
 }
 
 model Disease {
@@ -124,57 +116,47 @@ model Disease {
   description    String?
   symptomProfile String?
   isActive       Boolean         @default(true)
-  reports        DiseaseReport[]
-  advisories     Advisory[]
   alerts         Alert[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 }
 
 model DiseaseReport {
-  id                  Int          @id @default(autoincrement())
-  districtId          Int
-  diseaseId           Int
-  reporterId          Int
-  reportDate          DateTime
-  caseCount           Int          @default(0)
-  deathCount          Int          @default(0)
-  source              ReportSource @default(PWA_ONLINE)
-  status              ReportStatus @default(PENDING)
-  isMortalityPriority Boolean      @default(false)
+  id                  String         @id @default(uuid())
+  district            String
+  diseaseType         String
+  reporterId          String
+  timestamp           DateTime       @default(now())
+  caseCount           Int            @default(0)
+  deathCount          Int            @default(0)
+  isOfflineCached     Boolean        @default(false)
+  status              ReportStatus   @default(PENDING)
+  isMortalityPriority Boolean        @default(false)
   notes               String?
-  district            District     @relation(fields: [districtId], references: [id], onDelete: Cascade)
-  disease             Disease      @relation(fields: [diseaseId], references: [id], onDelete: Cascade)
-  reporter            User         @relation("ReportSubmittedBy", fields: [reporterId], references: [id], onDelete: Cascade)
+  reporter            User           @relation("ReportSubmittedBy", fields: [reporterId], references: [id], onDelete: Cascade)
   advisories          Advisory[]
-  createdAt           DateTime     @default(now())
-  updatedAt           DateTime     @updatedAt
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
 
-  @@unique([districtId, diseaseId, reporterId, reportDate])
-  @@index([districtId, reportDate])
-  @@index([diseaseId, reportDate])
+  @@index([district, timestamp])
+  @@index([diseaseType, timestamp])
   @@index([status])
 }
 
 model Advisory {
-  /// Intentional deviation from product spec: keep Int id and normalized disease
-  /// relation (diseaseId) instead of UUID + diseaseType string. This preserves
-  /// referential integrity and analytics joins; services expose compatibility
-  /// fields (diseaseType/idString) for spec-aligned payloads.
-  id              Int            @id @default(autoincrement())
-  diseaseId       Int
+  id              String         @id @default(uuid())
+  diseaseType     String
   regionId        Int
   districtId      Int?
-  sourceReportId  Int?
-  approvedById    Int?
+  sourceReportId  String?
+  approvedById    String?
   title           String
   content         String
-  language        Language
+  language        String
   status          AdvisoryStatus @default(DRAFT)
-  riskLevel       RiskLevel      @default(MODERATE)
+  riskLevel       String         @default("MODERATE")
   generatedByAI   Boolean        @default(true)
   approvedAt      DateTime?
-  disease         Disease        @relation(fields: [diseaseId], references: [id], onDelete: Cascade)
   region          Region         @relation(fields: [regionId], references: [id], onDelete: Cascade)
   district        District?      @relation(fields: [districtId], references: [id], onDelete: SetNull)
   sourceReport    DiseaseReport? @relation(fields: [sourceReportId], references: [id], onDelete: SetNull)
@@ -183,40 +165,31 @@ model Advisory {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
-  @@index([diseaseId])
   @@index([regionId])
   @@index([districtId])
   @@index([status])
 }
 
 model Alert {
-  /// Intentional deviation from product spec: keep normalized regionId/districtId
-  /// target relations and Int id for data integrity and geo-query efficiency.
-  /// Services map these relations to spec terminology (targetZone, idString,
-  /// severity/channel strings, isDelivered) in API payloads.
-  id            Int           @id @default(autoincrement())
-  regionId      Int
-  districtId    Int?
+  id            String        @id @default(uuid())
+  targetZone    String
   diseaseId     Int?
-  advisoryId    Int?
-  createdById   Int?
+  advisoryId    String?
+  createdById   String?
   title         String
   message       String
-  severity      AlertSeverity
-  channel       AlertChannel
+  severity      String
+  channel       String
+  isDelivered   Boolean       @default(false)
   deliveryCount Int           @default(0)
   failedCount   Int           @default(0)
-  sentAt        DateTime?
-  region        Region        @relation(fields: [regionId], references: [id], onDelete: Cascade)
-  district      District?     @relation(fields: [districtId], references: [id], onDelete: SetNull)
   disease       Disease?      @relation(fields: [diseaseId], references: [id], onDelete: SetNull)
   advisory      Advisory?     @relation(fields: [advisoryId], references: [id], onDelete: SetNull)
   createdBy     User?         @relation("AlertCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
-  @@index([regionId])
-  @@index([districtId])
+  @@index([targetZone])
   @@index([severity])
   @@index([channel])
 }

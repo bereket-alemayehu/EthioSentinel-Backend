@@ -5,13 +5,14 @@ export class UserService {
     return prisma.user.findMany({
       select: {
         id: true,
-        fullName: true,
+        username: true,
         email: true,
         phoneNumber: true,
         role: true,
         isActive: true,
-        regionId: true,
-        districtId: true,
+        region: true,
+        assignedDistrict: true,
+        clearanceLevel: true,
         createdAt: true,
         updatedAt: true,
       },

@@ -9,7 +9,7 @@ const router = Router();
 router.get(
   "/",
   authenticate,
-  authorize(Role.ADMIN),
+  authorize(Role.ADMIN, Role.RESEARCHER),
   AlertController.getAllAlerts,
 );
 

@@ -27,4 +27,12 @@ router.post(
   ReportController.createReport,
 );
 
+// BR-05: batch offline sync — mortality reports are persisted before morbidity
+router.post(
+  "/sync",
+  authenticate,
+  authorize(Role.ADMIN, Role.HEW),
+  ReportController.syncOfflineBatch,
+);
+
 export default router;

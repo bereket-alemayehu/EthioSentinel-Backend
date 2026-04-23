@@ -20,6 +20,16 @@ type ZScorePayload = {
   std_dev: number;
 };
 
+type NlpAdvisoryDraftPayload = {
+  diseaseType: string;
+  regionName: string;
+  language: string;
+  riskLevel?: string;
+  title: string;
+  content: string;
+  sourceReportId?: string;
+};
+
 export class AIService {
   private static readonly LOOKBACK_DAYS = 56;
 
@@ -34,12 +44,12 @@ export class AIService {
   }
 
   private static buildWeeklyAggregates(
-    reports: Array<{ reportDate: Date; caseCount: number; deathCount: number }>,
+    reports: Array<{ timestamp: Date; caseCount: number; deathCount: number }>,
   ): WeeklyAggregate[] {
     const weeklyMap = new Map<string, WeeklyAggregate>();
 
     for (const report of reports) {
-      const weekStartDate = this.getWeekStartUTC(report.reportDate);
+      const weekStartDate = this.getWeekStartUTC(report.timestamp);
       const weekStart = weekStartDate.toISOString().slice(0, 10);
 
       if (!weeklyMap.has(weekStart)) {
@@ -93,23 +103,17 @@ export class AIService {
   }
 
   private static async buildZScorePayload(
-    reportId: number,
+    reportId: string,
   ): Promise<ZScorePayload | null> {
     const report = await prisma.diseaseReport.findUnique({
       where: { id: reportId },
-      include: {
-        disease: {
-          select: { id: true, name: true },
-        },
-        district: {
-          select: {
-            id: true,
-            name: true,
-            region: {
-              select: { name: true },
-            },
-          },
-        },
+      select: {
+        id: true,
+        district: true,
+        diseaseType: true,
+        timestamp: true,
+        caseCount: true,
+        deathCount: true,
       },
     });
 
@@ -118,34 +122,30 @@ export class AIService {
       return null;
     }
 
-    const lookbackStart = new Date(report.reportDate);
+    const lookbackStart = new Date(report.timestamp);
     lookbackStart.setUTCDate(lookbackStart.getUTCDate() - this.LOOKBACK_DAYS);
 
     const historicalReports = await prisma.diseaseReport.findMany({
       where: {
-        districtId: report.districtId,
-        diseaseId: report.diseaseId,
-        reportDate: {
+        district: report.district,
+        diseaseType: report.diseaseType,
+        timestamp: {
           gte: lookbackStart,
-          lte: report.reportDate,
+          lte: report.timestamp,
         },
       },
       select: {
-        reportDate: true,
+        timestamp: true,
         caseCount: true,
         deathCount: true,
       },
       orderBy: {
-        reportDate: "asc",
+        timestamp: "asc",
       },
     });
 
     const caseValues = historicalReports.map((entry) => entry.caseCount);
     const stats = this.computeStats(caseValues);
-    const localZScore =
-      stats.stdDevCases > 0
-        ? (report.caseCount - stats.meanCases) / stats.stdDevCases
-        : null;
 
     return {
       method: "zscore",
@@ -196,14 +196,13 @@ export class AIService {
     });
   }
 
-  static enqueueZScoreAnomalyTrigger(reportId: number): void {
-    // Detached execution keeps report creation non-blocking.
+  static enqueueZScoreAnomalyTrigger(reportId: string): void {
     setImmediate(async () => {
       await this.triggerZScoreAnomaly(reportId);
     });
   }
 
-  static async triggerZScoreAnomaly(reportId: number): Promise<void> {
+  static async triggerZScoreAnomaly(reportId: string): Promise<void> {
     const payload = await this.buildZScorePayload(reportId);
     if (!payload) {
       return;
@@ -231,13 +230,12 @@ export class AIService {
       try {
         const response = await this.postJson(endpoint, payload);
         if (response.statusCode >= 200 && response.statusCode < 300) {
-          const responsePreview = response.body.slice(0, 400);
           logger.info("AI anomaly trigger sent successfully", {
             reportId,
             endpoint,
             attempt,
             statusCode: response.statusCode,
-            responseBody: responsePreview,
+            responseBody: response.body.slice(0, 400),
           });
           return;
         }
@@ -271,5 +269,44 @@ export class AIService {
       attempts: env.AI_SERVICE_RETRY_COUNT,
       error: lastErrorMessage,
     });
+  }
+
+  /**
+   * Persists an NLP-generated advisory draft pushed by the Python AI worker.
+   * Each language variant is stored as a separate Advisory row with status DRAFT.
+   */
+  static async persistNlpAdvisoryDraft(
+    payload: NlpAdvisoryDraftPayload,
+  ): Promise<{ id: string }> {
+    const region = await prisma.region.findFirst({
+      where: { name: { equals: payload.regionName, mode: "insensitive" } },
+      select: { id: true },
+    });
+
+    if (!region) {
+      throw new Error(`Region not found: "${payload.regionName}"`);
+    }
+
+    const advisory = await prisma.advisory.create({
+      data: {
+        diseaseType: payload.diseaseType,
+        regionId: region.id,
+        language: payload.language,
+        riskLevel: payload.riskLevel ?? "MODERATE",
+        title: payload.title,
+        content: payload.content,
+        status: "DRAFT",
+        sourceReportId: payload.sourceReportId ?? null,
+      },
+      select: { id: true },
+    });
+
+    logger.info("NLP advisory draft persisted", {
+      id: advisory.id,
+      diseaseType: payload.diseaseType,
+      language: payload.language,
+    });
+
+    return advisory;
   }
 }

@@ -1,0 +1,63 @@
+import { AppError } from "../utils/AppError";
+import { sanitizeNotes } from "../utils/pii.util";
+
+type ReportInput = {
+  district?: unknown;
+  diseaseType?: unknown;
+  caseCount?: unknown;
+  deathCount?: unknown;
+  notes?: unknown;
+  isOfflineCached?: unknown;
+};
+
+type ValidatedReportInput = {
+  district: string;
+  diseaseType: string;
+  caseCount: number;
+  deathCount: number;
+  notes: string | undefined;
+  isOfflineCached: boolean;
+};
+
+/**
+ * BR-01: Validates and sanitizes a disease report submission.
+ * - Required fields: district, diseaseType
+ * - Counts must be non-negative integers
+ * - Notes are sanitized to strip PII before persistence
+ */
+export function validateAndSanitizeReport(
+  input: ReportInput,
+): ValidatedReportInput {
+  const district = String(input.district ?? "").trim();
+  if (!district) {
+    throw new AppError("district is required", 400);
+  }
+
+  const diseaseType = String(input.diseaseType ?? "").trim();
+  if (!diseaseType) {
+    throw new AppError("diseaseType is required", 400);
+  }
+
+  const caseCount = Number(input.caseCount ?? 0);
+  if (!Number.isInteger(caseCount) || caseCount < 0) {
+    throw new AppError("caseCount must be a non-negative integer", 400);
+  }
+
+  const deathCount = Number(input.deathCount ?? 0);
+  if (!Number.isInteger(deathCount) || deathCount < 0) {
+    throw new AppError("deathCount must be a non-negative integer", 400);
+  }
+
+  if (deathCount > caseCount) {
+    throw new AppError("deathCount cannot exceed caseCount", 400);
+  }
+
+  let notes: string | undefined;
+  if (input.notes !== undefined && input.notes !== null && input.notes !== "") {
+    notes = sanitizeNotes(String(input.notes));
+  }
+
+  const isOfflineCached = Boolean(input.isOfflineCached ?? false);
+
+  return { district, diseaseType, caseCount, deathCount, notes, isOfflineCached };
+}

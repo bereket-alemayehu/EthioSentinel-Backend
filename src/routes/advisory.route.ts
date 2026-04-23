@@ -8,9 +8,21 @@ const router = Router();
 
 router.post("/symptom-check", AdvisoryController.symptomCheck);
 
-router.post("/generate", AdvisoryController.generateAdvisoryText);
+router.post(
+  "/generate",
+  authenticate,
+  authorize(Role.ADMIN, Role.HEW),
+  AdvisoryController.generateAdvisoryText,
+);
 
 router.get("/", AdvisoryController.getAllAdvisories);
+
+router.get(
+  "/drafts",
+  authenticate,
+  authorize(Role.ADMIN),
+  AdvisoryController.getDraftAdvisories,
+);
 
 router.post(
   "/",
@@ -25,4 +37,12 @@ router.patch(
   authorize(Role.ADMIN),
   AdvisoryController.approveAdvisory,
 );
+
+router.patch(
+  "/:id/reject",
+  authenticate,
+  authorize(Role.ADMIN),
+  AdvisoryController.rejectAdvisory,
+);
+
 export default router;
