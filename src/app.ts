@@ -11,7 +11,7 @@ import { v4 as uuidv4 } from "uuid";
 // Centralizes req.id and req.user type augmentations
 import { errorHandler as globalErrorHandler } from "./middlewares/errorHandler";
 import { apiLimiter } from "./middlewares/rateLimiter";
-import { logger } from "./utils/logger";
+import logger from "./utils/logger";
 import router from "./routes/index";
 import { env } from "./config/env.config";
 
