@@ -1,12 +1,12 @@
 import { prisma } from "../lib/prisma";
-import {
-  ReportSource,
-  ReportStatus,
-  UserRole,
-} from "../../generated/prisma/enums";
+import { ReportStatus, Role } from "../../generated/prisma/enums";
 import { AppError } from "../utils/AppError";
 import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
+import { AIService } from "./ai.service";
+import { AlertService } from "./alert.service";
+import { logger } from "../utils/logger";
+import { validateAndSanitizeReport } from "../validations/report.validation";
 
 type WeeklyReportAggregate = {
   weekStart: string;
@@ -30,19 +30,19 @@ export class ReportService {
   static async getWeeklyAggregatedReports(): Promise<WeeklyReportAggregate[]> {
     const reports = await prisma.diseaseReport.findMany({
       select: {
-        reportDate: true,
+        timestamp: true,
         caseCount: true,
         deathCount: true,
       },
       orderBy: {
-        reportDate: "asc",
+        timestamp: "asc",
       },
     });
 
     const weeklyMap = new Map<string, WeeklyReportAggregate>();
 
     for (const report of reports) {
-      const weekStartDate = this.getWeekStartUTC(report.reportDate);
+      const weekStartDate = this.getWeekStartUTC(report.timestamp);
       const weekStartKey = weekStartDate.toISOString().slice(0, 10);
 
       if (!weeklyMap.has(weekStartKey)) {
@@ -133,79 +133,110 @@ export class ReportService {
   static async getAllReports() {
     return prisma.diseaseReport.findMany({
       include: {
-        disease: true,
-        district: true,
         reporter: {
           select: {
             id: true,
-            fullName: true,
-            email: true,
+            username: true,
             role: true,
+            // BR-01: email omitted from list output to avoid PII exposure
           },
         },
       },
       orderBy: {
-        reportDate: "desc",
+        timestamp: "desc",
       },
     });
   }
 
   static async createReport(data: {
-    districtId?: number;
-    diseaseId?: number;
-    reporterId?: number;
-    reportDate?: string;
+    district?: string;
+    diseaseType?: string;
+    reporterId?: string;
     caseCount?: number;
     deathCount?: number;
-    source?: ReportSource;
+    isOfflineCached?: boolean;
     status?: ReportStatus;
     notes?: string;
-    user: { id: number; role: UserRole };
+    user: { id: string; role: Role };
   }) {
     const {
-      districtId,
-      diseaseId,
+      district,
+      diseaseType,
       reporterId,
-      reportDate,
       caseCount,
       deathCount,
-      source,
+      isOfflineCached,
       status,
       notes,
       user,
     } = data;
 
-    if (!districtId || !diseaseId || !reportDate) {
-      throw new AppError(
-        "districtId, diseaseId and reportDate are required",
-        400,
-      );
-    }
+    // BR-01: validate and sanitize input (strips PII from notes, validates counts)
+    const sanitized = validateAndSanitizeReport({ district, diseaseType, caseCount, deathCount, notes, isOfflineCached });
 
     const effectiveReporterId =
-      user.role === UserRole.HEW ? user.id : reporterId;
+      user.role === Role.HEW ? user.id : reporterId;
 
     if (!effectiveReporterId) {
       throw new AppError("reporterId is required", 400);
     }
 
-    return prisma.diseaseReport.create({
-      data: {
-        districtId,
-        diseaseId,
-        reporterId: effectiveReporterId,
-        reportDate: new Date(reportDate),
-        caseCount: caseCount ?? 0,
-        deathCount: deathCount ?? 0,
-        source: source ?? ReportSource.PWA_ONLINE,
-        status: status ?? ReportStatus.PENDING,
-        isMortalityPriority: (deathCount ?? 0) > 0,
-        notes,
-      },
-      include: {
-        disease: true,
-        district: true,
-      },
+    let report;
+    try {
+      report = await prisma.diseaseReport.create({
+        data: {
+          district: sanitized.district,
+          diseaseType: sanitized.diseaseType,
+          reporterId: effectiveReporterId,
+          caseCount: sanitized.caseCount,
+          deathCount: sanitized.deathCount,
+          isOfflineCached: sanitized.isOfflineCached,
+          status: status ?? ReportStatus.PENDING,
+          isMortalityPriority: sanitized.deathCount > 0,
+          notes: sanitized.notes,
+        },
+        include: {
+          reporter: {
+            select: {
+              id: true,
+              username: true,
+              role: true,
+            },
+          },
+        },
+      });
+    } catch (error: unknown) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        (error as { code?: string }).code === "P2002"
+      ) {
+        throw new AppError(
+          "A report already exists for this district, disease, reporter, and date",
+          409,
+        );
+      }
+      throw error;
+    }
+
+    AIService.enqueueZScoreAnomalyTrigger(report.id);
+
+    // BR-03: fire-and-forget mortality threshold check
+    setImmediate(async () => {
+      try {
+        await AlertService.checkAndCreateCriticalMortalityAlert(
+          report.diseaseType,
+          report.district,
+        );
+      } catch (err) {
+        logger.error("BR-03 mortality threshold check failed", {
+          reportId: report.id,
+          err,
+        });
+      }
     });
+
+    return report;
   }
 }

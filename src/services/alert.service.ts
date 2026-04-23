@@ -1,37 +1,45 @@
 import { prisma } from "../lib/prisma";
-import { AlertChannel, AlertSeverity } from "../../generated/prisma/enums";
+import { AdvisoryStatus } from "../../generated/prisma/enums";
 import { AppError } from "../utils/AppError";
 import { logger } from "../utils/logger";
 import { EmailSender } from "../utils/EmailSender";
 
+const VALID_SEVERITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
+const VALID_CHANNELS = ["WEB", "SMS", "USSD", "EMAIL"] as const;
+
+type AlertSeverityValue = (typeof VALID_SEVERITIES)[number];
+type AlertChannelValue = (typeof VALID_CHANNELS)[number];
+
 type AlertWorkflowStatus = "Draft" | "Approved";
 
 type AlertManagementView = {
-  id: number;
+  id: string;
   disease: string | null;
-  severity: AlertSeverity;
+  severity: string;
+  channelString: string;
   advisory: string;
   status: AlertWorkflowStatus;
+  targetZone: string;
+  isDelivered: boolean;
 };
 
 type AlertNotificationDetails = {
-  id: number;
-  regionId: number;
-  districtId: number | null;
-  severity: AlertSeverity;
+  id: string;
+  targetZone: string;
+  severity: string;
   message: string;
   disease: { name: string } | null;
   advisory: { content: string } | null;
-  region: { name: string };
-  district: { name: string } | null;
 };
 
 export class AlertService {
   private static toAlertManagementView(alert: {
-    id: number;
-    severity: AlertSeverity;
+    id: string;
+    severity: string;
+    channel: string;
     message: string;
-    sentAt: Date | null;
+    isDelivered: boolean;
+    targetZone: string;
     disease: { name: string } | null;
     advisory: { content: string } | null;
   }): AlertManagementView {
@@ -39,28 +47,54 @@ export class AlertService {
       id: alert.id,
       disease: alert.disease?.name ?? null,
       severity: alert.severity,
+      channelString: alert.channel,
       advisory: alert.advisory?.content ?? alert.message,
-      status: alert.sentAt ? "Approved" : "Draft",
+      status: alert.isDelivered ? "Approved" : "Draft",
+      targetZone: alert.targetZone,
+      isDelivered: alert.isDelivered,
     };
+  }
+
+  private static parseSeverity(value: unknown): AlertSeverityValue {
+    if (value === undefined || value === null || value === "") {
+      return "MEDIUM";
+    }
+    const normalized = String(value).trim().toUpperCase();
+    if (!VALID_SEVERITIES.includes(normalized as AlertSeverityValue)) {
+      throw new AppError(
+        `severity must be one of: ${VALID_SEVERITIES.join(", ")}`,
+        400,
+      );
+    }
+    return normalized as AlertSeverityValue;
+  }
+
+  private static parseChannel(value: unknown): AlertChannelValue {
+    if (value === undefined || value === null || value === "") {
+      return "WEB";
+    }
+    const normalized = String(value).trim().toUpperCase();
+    if (!VALID_CHANNELS.includes(normalized as AlertChannelValue)) {
+      throw new AppError(
+        `channel must be one of: ${VALID_CHANNELS.join(", ")}`,
+        400,
+      );
+    }
+    return normalized as AlertChannelValue;
   }
 
   private static async triggerApprovalNotification(
     alert: AlertNotificationDetails,
   ) {
-    const location = alert.district
-      ? `${alert.district.name}, ${alert.region.name}`
-      : alert.region.name;
-
     const recipients = await prisma.user.findMany({
       where: {
         isActive: true,
-        ...(alert.districtId
-          ? { districtId: alert.districtId }
-          : { regionId: alert.regionId }),
+        OR: [
+          { assignedDistrict: alert.targetZone },
+          { region: alert.targetZone },
+        ],
       },
-      select: {
-        email: true,
-      },
+      select: { email: true },
     });
 
     const emails = recipients
@@ -69,7 +103,7 @@ export class AlertService {
 
     const emailResult = await EmailSender.sendBulkAlertApprovalEmails(emails, {
       disease: alert.disease?.name ?? "Unknown disease",
-      location,
+      location: alert.targetZone,
       advisory: alert.advisory?.content ?? alert.message,
       severity: alert.severity,
     });
@@ -86,7 +120,7 @@ export class AlertService {
       alertId: alert.id,
       disease: alert.disease?.name ?? null,
       severity: alert.severity,
-      location,
+      targetZone: alert.targetZone,
       recipientsAttempted: emailResult.attempted,
       delivered: emailResult.delivered,
       failed: emailResult.failed,
@@ -96,8 +130,6 @@ export class AlertService {
   static async getAllAlerts() {
     const alerts = await prisma.alert.findMany({
       include: {
-        region: true,
-        district: true,
         disease: true,
         advisory: true,
       },
@@ -109,18 +141,16 @@ export class AlertService {
     return alerts.map((alert) => this.toAlertManagementView(alert));
   }
 
-  static async approveAlert(alertId: number) {
-    if (Number.isNaN(alertId)) {
+  static async approveAlert(alertId: string) {
+    if (!alertId) {
       throw new AppError("Invalid alert id", 400);
     }
 
     const existingAlert = await prisma.alert.findUnique({
       where: { id: alertId },
       include: {
-        region: true,
-        district: true,
         disease: true,
-        advisory: true,
+        advisory: { select: { id: true, status: true, content: true } },
       },
     });
 
@@ -128,14 +158,18 @@ export class AlertService {
       throw new AppError("Alert not found", 404);
     }
 
+    // BR-02: block broadcast if the linked advisory is not yet APPROVED
+    if (existingAlert.advisory && existingAlert.advisory.status !== AdvisoryStatus.APPROVED) {
+      throw new AppError(
+        "Cannot approve alert: linked advisory must be APPROVED before broadcast",
+        422,
+      );
+    }
+
     const updatedAlert = await prisma.alert.update({
       where: { id: alertId },
-      data: {
-        sentAt: new Date(),
-      },
+      data: { isDelivered: true },
       include: {
-        region: true,
-        district: true,
         disease: true,
         advisory: true,
       },
@@ -147,16 +181,14 @@ export class AlertService {
     return managementView;
   }
 
-  static async rejectAlert(alertId: number) {
-    if (Number.isNaN(alertId)) {
+  static async rejectAlert(alertId: string) {
+    if (!alertId) {
       throw new AppError("Invalid alert id", 400);
     }
 
     const existingAlert = await prisma.alert.findUnique({
       where: { id: alertId },
       include: {
-        region: true,
-        district: true,
         disease: true,
         advisory: true,
       },
@@ -169,13 +201,11 @@ export class AlertService {
     const updatedAlert = await prisma.alert.update({
       where: { id: alertId },
       data: {
-        sentAt: null,
+        isDelivered: false,
         deliveryCount: 0,
         failedCount: 0,
       },
       include: {
-        region: true,
-        district: true,
         disease: true,
         advisory: true,
       },
@@ -185,21 +215,19 @@ export class AlertService {
   }
 
   static async createAlert(data: {
-    regionId?: number;
-    districtId?: number;
+    targetZone?: string;
     diseaseId?: number;
-    advisoryId?: number;
-    createdById?: number;
+    advisoryId?: string;
+    createdById?: string;
     title?: string;
     message?: string;
-    severity?: AlertSeverity;
-    channel?: AlertChannel;
-    sentAt?: string;
-    userId: number;
+    severity?: string;
+    channel?: string;
+    isDelivered?: boolean;
+    userId: string;
   }) {
     const {
-      regionId,
-      districtId,
+      targetZone,
       diseaseId,
       advisoryId,
       createdById,
@@ -207,26 +235,131 @@ export class AlertService {
       message,
       severity,
       channel,
-      sentAt,
+      isDelivered,
       userId,
     } = data;
 
-    if (!regionId || !title || !message) {
-      throw new AppError("regionId, title and message are required", 400);
+    const parsedSeverity = this.parseSeverity(severity);
+    const parsedChannel = this.parseChannel(channel);
+
+    if (!targetZone || !title || !message) {
+      throw new AppError("targetZone, title and message are required", 400);
     }
 
-    return prisma.alert.create({
+    // BR-02: if an advisory is linked, it must be APPROVED before the alert can be created
+    if (advisoryId) {
+      const linkedAdvisory = await prisma.advisory.findUnique({
+        where: { id: advisoryId },
+        select: { status: true },
+      });
+      if (!linkedAdvisory) {
+        throw new AppError("Linked advisory not found", 404);
+      }
+      if (linkedAdvisory.status !== AdvisoryStatus.APPROVED) {
+        throw new AppError(
+          "Cannot create alert: linked advisory must be APPROVED first",
+          422,
+        );
+      }
+    }
+
+    const alert = await prisma.alert.create({
       data: {
-        regionId,
-        districtId,
+        targetZone,
         diseaseId,
         advisoryId,
         createdById: createdById ?? userId,
         title,
         message,
-        severity: severity ?? AlertSeverity.MEDIUM,
-        channel: channel ?? AlertChannel.WEB,
-        sentAt: sentAt ? new Date(sentAt) : undefined,
+        severity: parsedSeverity,
+        channel: parsedChannel,
+        isDelivered: isDelivered ?? false,
+      },
+      include: {
+        disease: true,
+        advisory: true,
+      },
+    });
+
+    return this.toAlertManagementView(alert);
+  }
+
+  /**
+   * BR-03: Called by Estif's report.service.ts after a new report is persisted.
+   * Checks if deaths/cases in the last 24h for the given district+diseaseType
+   * exceed the 10% mortality threshold. If so, creates a CRITICAL alert and
+   * notifies all ADMIN users.
+   */
+  static async checkAndCreateCriticalMortalityAlert(
+    diseaseType: string,
+    district: string,
+  ): Promise<void> {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const reports = await prisma.diseaseReport.findMany({
+      where: {
+        diseaseType,
+        district,
+        timestamp: { gte: since },
+      },
+      select: { caseCount: true, deathCount: true },
+    });
+
+    if (reports.length === 0) return;
+
+    const totalCases = reports.reduce((sum, r) => sum + r.caseCount, 0);
+    const totalDeaths = reports.reduce((sum, r) => sum + r.deathCount, 0);
+
+    if (totalCases === 0) return;
+
+    const mortalityRate = totalDeaths / totalCases;
+    if (mortalityRate <= 0.1) return;
+
+    const title = `CRITICAL: ${diseaseType} mortality rate exceeded 10% in ${district}`;
+    const message =
+      `In the last 24 hours, ${district} reported ${totalDeaths} deaths out of ` +
+      `${totalCases} ${diseaseType} cases (${(mortalityRate * 100).toFixed(1)}% mortality rate). ` +
+      `Immediate response required.`;
+
+    const alert = await prisma.alert.create({
+      data: {
+        targetZone: district,
+        title,
+        message,
+        severity: "CRITICAL",
+        channel: "EMAIL",
+        isDelivered: false,
+      },
+    });
+
+    logger.warn("BR-03 critical mortality threshold exceeded", {
+      alertId: alert.id,
+      diseaseType,
+      district,
+      totalCases,
+      totalDeaths,
+      mortalityRate: `${(mortalityRate * 100).toFixed(1)}%`,
+    });
+
+    const adminEmails = await prisma.user.findMany({
+      where: { role: "ADMIN", isActive: true },
+      select: { email: true },
+    });
+
+    const emails = adminEmails.map((u) => u.email).filter(Boolean);
+
+    const emailResult = await EmailSender.sendBulkAlertApprovalEmails(emails, {
+      disease: diseaseType,
+      location: district,
+      advisory: message,
+      severity: "CRITICAL",
+    });
+
+    await prisma.alert.update({
+      where: { id: alert.id },
+      data: {
+        deliveryCount: emailResult.delivered,
+        failedCount: emailResult.failed,
       },
     });
   }

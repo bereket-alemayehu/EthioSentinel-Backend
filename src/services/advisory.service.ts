@@ -2,7 +2,6 @@ import { prisma } from "../lib/prisma";
 import {
   AdvisoryStatus,
   Language,
-  RiskLevel,
 } from "../../generated/prisma/enums";
 import { AppError } from "../utils/AppError";
 
@@ -41,6 +40,22 @@ type SymptomCheckerResult = {
 };
 
 export class AdvisoryService {
+  private static parseEnumValue<T extends string>(
+    value: unknown,
+    enumObject: Record<string, T>,
+    field: string,
+  ): T | undefined {
+    if (value === undefined || value === null || value === "") {
+      return undefined;
+    }
+    const normalized = String(value).trim().toUpperCase();
+    const allowedValues = Object.values(enumObject);
+    if (!allowedValues.includes(normalized as T)) {
+      throw new AppError(`${field} must be one of: ${allowedValues.join(", ")}`, 400);
+    }
+    return normalized as T;
+  }
+
   static checkSymptoms(data: SymptomCheckerInput): SymptomCheckerResult {
     const symptomsRaw = Array.isArray(data.symptoms) ? data.symptoms : [];
     const selectedSymptoms = symptomsRaw
@@ -217,14 +232,16 @@ export class AdvisoryService {
 
   static async getAllAdvisories() {
     return prisma.advisory.findMany({
+      where: {
+        status: AdvisoryStatus.APPROVED,
+      },
       include: {
-        disease: true,
         region: true,
         district: true,
         approvedBy: {
           select: {
             id: true,
-            fullName: true,
+            username: true,
             email: true,
           },
         },
@@ -235,21 +252,63 @@ export class AdvisoryService {
     });
   }
 
+  static async getAdvisoryDrafts(page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+
+    const [drafts, total] = await Promise.all([
+      prisma.advisory.findMany({
+        where: { status: AdvisoryStatus.DRAFT },
+        include: {
+          region: true,
+          district: true,
+          sourceReport: {
+            select: { id: true, diseaseType: true, district: true, timestamp: true },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.advisory.count({ where: { status: AdvisoryStatus.DRAFT } }),
+    ]);
+
+    return {
+      data: drafts,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  static async rejectAdvisory(advisoryId: string) {
+    if (!advisoryId) {
+      throw new AppError("Invalid advisory id", 400);
+    }
+
+    return prisma.advisory.update({
+      where: { id: advisoryId },
+      data: { status: AdvisoryStatus.REJECTED },
+    });
+  }
+
   static async createAdvisory(data: {
-    diseaseId?: number;
+    diseaseType?: string;
     regionId?: number;
     districtId?: number;
-    sourceReportId?: number;
-    approvedById?: number;
+    sourceReportId?: string;
+    approvedById?: string;
     title?: string;
     content?: string;
-    language?: Language;
+    language?: string;
     status?: AdvisoryStatus;
-    riskLevel?: RiskLevel;
+    riskLevel?: string;
     generatedByAI?: boolean;
   }) {
     const {
-      diseaseId,
+      diseaseType,
       regionId,
       districtId,
       sourceReportId,
@@ -262,33 +321,42 @@ export class AdvisoryService {
       generatedByAI,
     } = data;
 
-    if (!diseaseId || !regionId || !title || !content) {
+    if (!diseaseType || !regionId || !title || !content) {
       throw new AppError(
-        "diseaseId, regionId, title and content are required",
+        "diseaseType, regionId, title and content are required",
         400,
       );
     }
 
+    const parsedStatus =
+      this.parseEnumValue(status, AdvisoryStatus, "status") ??
+      AdvisoryStatus.DRAFT;
+
     return prisma.advisory.create({
       data: {
-        diseaseId,
+        diseaseType,
         regionId,
         districtId,
         sourceReportId,
         approvedById,
         title,
         content,
-        language: language ?? Language.AMHARIC,
-        status: status ?? AdvisoryStatus.DRAFT,
-        riskLevel: riskLevel ?? RiskLevel.MODERATE,
+        language: language ?? "AMHARIC",
+        status: parsedStatus,
+        riskLevel: riskLevel ?? "MODERATE",
         generatedByAI: generatedByAI ?? true,
-        approvedAt: status === AdvisoryStatus.APPROVED ? new Date() : undefined,
+        approvedAt:
+          parsedStatus === AdvisoryStatus.APPROVED ? new Date() : undefined,
+      },
+      include: {
+        region: true,
+        district: true,
       },
     });
   }
 
-  static async approveAdvisory(advisoryId: number, userId: number) {
-    if (Number.isNaN(advisoryId)) {
+  static async approveAdvisory(advisoryId: string, userId: string) {
+    if (!advisoryId) {
       throw new AppError("Invalid advisory id", 400);
     }
 
