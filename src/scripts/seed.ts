@@ -1,5 +1,6 @@
-import { Language } from "../../generated/prisma/enums";
+import { Language, Role } from "../../generated/prisma/enums";
 import { prisma } from "../lib/prisma";
+import bcrypt from "bcryptjs";
 
 type DistrictSeed = {
   name: string;
@@ -335,9 +336,53 @@ async function seedRegionsAndDistricts() {
   }
 }
 
+async function seedUsers() {
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD || "Admin@12345";
+  const hewPassword = "Hew@12345";
+
+  const adminHash = await bcrypt.hash(adminPassword, 10);
+  const hewHash = await bcrypt.hash(hewPassword, 10);
+
+  // Seed Admin
+  await prisma.user.upsert({
+    where: { email: "admin@ethiosentinel.com" },
+    update: {
+      passwordHash: adminHash,
+      role: Role.ADMIN,
+    },
+    create: {
+      username: "admin",
+      email: "admin@ethiosentinel.com",
+      passwordHash: adminHash,
+      role: Role.ADMIN,
+      region: "Addis Ababa",
+    },
+  });
+
+  // Seed HEW
+  await prisma.user.upsert({
+    where: { email: "hew@ethiosentinel.com" },
+    update: {
+      passwordHash: hewHash,
+      role: Role.HEW,
+    },
+    create: {
+      username: "hew_user",
+      email: "hew@ethiosentinel.com",
+      passwordHash: hewHash,
+      role: Role.HEW,
+      region: "Addis Ababa",
+      assignedDistrict: "Bole",
+    },
+  });
+}
+
 async function main() {
   await seedRegionsAndDistricts();
   console.log("✅ Seeded Ethiopia regions and districts");
+
+  await seedUsers();
+  console.log("✅ Seeded Admin and HEW users");
 }
 
 main()

@@ -26,6 +26,6 @@ export class AuthController {
   static getMe = catchAsync(async (req: Request, res: Response) => {
     const userId = req.user!.id;
     const user = await AuthService.getMe(userId);
-    return sendSuccess(res, user, "User profile retrieved");
+    return sendSuccess(res, { user }, "User profile retrieved");
   });
 }
