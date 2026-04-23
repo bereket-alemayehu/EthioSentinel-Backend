@@ -66,9 +66,9 @@ app.use(compression());
 // 7. HTTP Request Logging
 // ----------------------------------------------------------------------------
 if (env.NODE_ENV !== "production") {
-  app.use(morgan("dev", { stream: { write: (message) => logger.http(message.trim()) } }));
+  app.use(morgan("dev", { stream: { write: (message: string) => logger.http(message.trim()) } }));
 } else {
-  app.use(morgan("combined", { stream: { write: (message) => logger.info(message.trim()) } }));
+  app.use(morgan("combined", { stream: { write: (message: string) => logger.info(message.trim()) } }));
 }
 
 // ----------------------------------------------------------------------------
