@@ -4,6 +4,7 @@ import { URL } from "url";
 import { prisma } from "../lib/prisma";
 import { env } from "../config/env.config";
 import { logger } from "../utils/logger";
+import { EmailSender } from "../utils/EmailSender";
 
 type WeeklyAggregate = {
   weekStart: string;
@@ -18,6 +19,12 @@ type ZScorePayload = {
   current_cases: number;
   historical_mean: number;
   std_dev: number;
+};
+
+type ZScoreApiResponse = {
+  method?: string;
+  z_score?: number;
+  classification?: string;
 };
 
 type NlpAdvisoryDraftPayload = {
@@ -160,39 +167,237 @@ export class AIService {
     const client = url.protocol === "https:" ? https : http;
     const requestBody = JSON.stringify(payload);
 
-    return new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
-      const req = client.request(
-        {
-          method: "POST",
-          protocol: url.protocol,
-          hostname: url.hostname,
-          port: url.port || undefined,
-          path: `${url.pathname}${url.search}`,
-          headers: {
-            "Content-Type": "application/json",
-            "Content-Length": Buffer.byteLength(requestBody),
+    return new Promise<{ statusCode: number; body: string }>(
+      (resolve, reject) => {
+        const req = client.request(
+          {
+            method: "POST",
+            protocol: url.protocol,
+            hostname: url.hostname,
+            port: url.port || undefined,
+            path: `${url.pathname}${url.search}`,
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Length": Buffer.byteLength(requestBody),
+            },
+            timeout: env.AI_SERVICE_TIMEOUT_MS,
           },
-          timeout: env.AI_SERVICE_TIMEOUT_MS,
-        },
-        (res) => {
-          const chunks: Buffer[] = [];
+          (res) => {
+            const chunks: Buffer[] = [];
 
-          res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-          res.on("end", () => {
-            resolve({
-              statusCode: res.statusCode ?? 500,
-              body: Buffer.concat(chunks).toString("utf8"),
+            res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+            res.on("end", () => {
+              resolve({
+                statusCode: res.statusCode ?? 500,
+                body: Buffer.concat(chunks).toString("utf8"),
+              });
             });
-          });
-        },
-      );
+          },
+        );
 
-      req.on("timeout", () => {
-        req.destroy(new Error("AI service request timed out"));
+        req.on("timeout", () => {
+          req.destroy(new Error("AI service request timed out"));
+        });
+        req.on("error", reject);
+        req.write(requestBody);
+        req.end();
+      },
+    );
+  }
+
+  private static parseZScoreApiResponse(
+    body: string,
+  ): ZScoreApiResponse | null {
+    try {
+      const parsed = JSON.parse(body) as unknown;
+      if (!parsed || typeof parsed !== "object") {
+        return null;
+      }
+      return parsed as ZScoreApiResponse;
+    } catch {
+      return null;
+    }
+  }
+
+  private static getSeverityFromZScore(zScore?: number): "HIGH" | "CRITICAL" {
+    if (typeof zScore === "number" && zScore >= 3) {
+      return "CRITICAL";
+    }
+    return "HIGH";
+  }
+
+  private static getRiskLevelFromZScore(
+    zScore?: number,
+  ): "MODERATE" | "HIGH" | "CRITICAL" {
+    if (typeof zScore === "number" && zScore >= 3) return "CRITICAL";
+    if (typeof zScore === "number" && zScore >= 2) return "HIGH";
+    return "MODERATE";
+  }
+
+  private static buildSuggestedAdvisoryContent(input: {
+    diseaseType: string;
+    district: string;
+    currentCases: number;
+    historicalMean: number;
+    zScore?: number;
+  }): string {
+    const z =
+      typeof input.zScore === "number" ? input.zScore.toFixed(2) : "unknown";
+    return [
+      `AI anomaly signal detected for ${input.diseaseType} in ${input.district}.`,
+      `Current cases: ${input.currentCases}; baseline mean: ${input.historicalMean.toFixed(2)}; z-score: ${z}.`,
+      "Suggested immediate actions:",
+      "1) Activate targeted community awareness in affected kebeles.",
+      "2) Increase case confirmation and triage at nearby health facilities.",
+      "3) Reinforce prevention supplies and rapid response follow-up.",
+      "This draft was generated automatically and requires ADMIN review before public broadcast.",
+    ].join("\n");
+  }
+
+  private static async createAiSuggestedAdvisoryDraft(input: {
+    reportId: string;
+    diseaseType: string;
+    district: string;
+    currentCases: number;
+    historicalMean: number;
+    zScore?: number;
+  }): Promise<{ id: string } | null> {
+    const districtRow = await prisma.district.findFirst({
+      where: {
+        OR: [
+          { name: { equals: input.district, mode: "insensitive" } },
+          { code: { equals: input.district, mode: "insensitive" } },
+        ],
+      },
+      select: {
+        id: true,
+        regionId: true,
+        name: true,
+      },
+    });
+
+    if (!districtRow) {
+      logger.warn("AI advisory draft skipped: district not found", {
+        reportId: input.reportId,
+        district: input.district,
       });
-      req.on("error", reject);
-      req.write(requestBody);
-      req.end();
+      return null;
+    }
+
+    const existing = await prisma.advisory.findFirst({
+      where: {
+        sourceReportId: input.reportId,
+        generatedByAI: true,
+      },
+      select: { id: true },
+    });
+
+    if (existing) {
+      return existing;
+    }
+
+    const riskLevel = this.getRiskLevelFromZScore(input.zScore);
+
+    return prisma.advisory.create({
+      data: {
+        diseaseType: input.diseaseType,
+        regionId: districtRow.regionId,
+        districtId: districtRow.id,
+        sourceReportId: input.reportId,
+        title: `AI Draft: ${input.diseaseType} spike detected in ${districtRow.name}`,
+        content: this.buildSuggestedAdvisoryContent(input),
+        language: "ENGLISH",
+        status: "DRAFT",
+        riskLevel,
+        generatedByAI: true,
+      },
+      select: { id: true },
+    });
+  }
+
+  private static async createAdminReviewAlertAndNotify(input: {
+    reportId: string;
+    diseaseType: string;
+    district: string;
+    currentCases: number;
+    historicalMean: number;
+    zScore?: number;
+    advisoryDraftId?: string;
+  }): Promise<void> {
+    const existingAlert = await prisma.alert.findFirst({
+      where: {
+        aiSuggested: true,
+        sourceReportId: input.reportId,
+      },
+      select: { id: true },
+    });
+
+    if (existingAlert) {
+      logger.info("Skipping duplicate AI alert for source report", {
+        reportId: input.reportId,
+        existingAlertId: existingAlert.id,
+      });
+      return;
+    }
+
+    const severity = this.getSeverityFromZScore(input.zScore);
+    const z =
+      typeof input.zScore === "number" ? input.zScore.toFixed(2) : "unknown";
+
+    const message =
+      `AI detected a potential ${input.diseaseType} spike in ${input.district}. ` +
+      `Current cases: ${input.currentCases}, baseline mean: ${input.historicalMean.toFixed(2)}, z-score: ${z}. ` +
+      `An AI-generated advisory draft is ready for ADMIN review and approval.`;
+
+    const createdAlert = await prisma.alert.create({
+      data: {
+        targetZone: input.district,
+        title: `AI Spike Alert: ${input.diseaseType} in ${input.district}`,
+        message,
+        severity,
+        channel: "EMAIL",
+        isDelivered: false,
+        advisoryId: input.advisoryDraftId,
+        sourceReportId: input.reportId,
+        aiSuggested: true,
+      },
+      select: { id: true },
+    });
+
+    const admins = await prisma.user.findMany({
+      where: { role: "ADMIN", isActive: true },
+      select: { email: true },
+    });
+
+    const emails = admins.map((u) => u.email).filter(Boolean);
+    const emailResult = await EmailSender.sendBulkAlertApprovalEmails(emails, {
+      disease: input.diseaseType,
+      location: input.district,
+      advisory:
+        `${message}` +
+        (input.advisoryDraftId
+          ? ` Draft advisory id: ${input.advisoryDraftId}`
+          : ""),
+      severity,
+    });
+
+    await prisma.alert.update({
+      where: { id: createdAlert.id },
+      data: {
+        deliveryCount: emailResult.delivered,
+        failedCount: emailResult.failed,
+      },
+    });
+
+    logger.warn("AI anomaly admin notification created", {
+      reportId: input.reportId,
+      alertId: createdAlert.id,
+      advisoryDraftId: input.advisoryDraftId ?? null,
+      diseaseType: input.diseaseType,
+      district: input.district,
+      severity,
+      delivered: emailResult.delivered,
+      failed: emailResult.failed,
     });
   }
 
@@ -230,6 +435,48 @@ export class AIService {
       try {
         const response = await this.postJson(endpoint, payload);
         if (response.statusCode >= 200 && response.statusCode < 300) {
+          const parsedResponse = this.parseZScoreApiResponse(response.body);
+          const classification = String(
+            parsedResponse?.classification ?? "",
+          ).toUpperCase();
+          const zScore =
+            typeof parsedResponse?.z_score === "number"
+              ? parsedResponse.z_score
+              : undefined;
+
+          if (classification === "ANOMALY") {
+            const report = await prisma.diseaseReport.findUnique({
+              where: { id: reportId },
+              select: {
+                id: true,
+                diseaseType: true,
+                district: true,
+                caseCount: true,
+              },
+            });
+
+            if (report) {
+              const advisoryDraft = await this.createAiSuggestedAdvisoryDraft({
+                reportId: report.id,
+                diseaseType: report.diseaseType,
+                district: report.district,
+                currentCases: report.caseCount,
+                historicalMean: payload.historical_mean,
+                zScore,
+              });
+
+              await this.createAdminReviewAlertAndNotify({
+                reportId: report.id,
+                diseaseType: report.diseaseType,
+                district: report.district,
+                currentCases: report.caseCount,
+                historicalMean: payload.historical_mean,
+                zScore,
+                advisoryDraftId: advisoryDraft?.id,
+              });
+            }
+          }
+
           logger.info("AI anomaly trigger sent successfully", {
             reportId,
             endpoint,
@@ -248,7 +495,8 @@ export class AIService {
           responseBody: response.body.slice(0, 400),
         });
       } catch (error) {
-        lastErrorMessage = error instanceof Error ? error.message : String(error);
+        lastErrorMessage =
+          error instanceof Error ? error.message : String(error);
         logger.warn("AI anomaly trigger attempt failed", {
           reportId,
           attempt,
