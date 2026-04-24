@@ -28,6 +28,13 @@ router.get(
   AdvisoryController.getDraftAdvisories,
 );
 
+router.get(
+  "/approved-list",
+  authenticate,
+  authorize(Role.ADMIN),
+  AdvisoryController.getApprovedAdvisories,
+);
+
 router.post(
   "/",
   authenticate,
@@ -47,6 +54,13 @@ router.patch(
   authenticate,
   authorize(Role.ADMIN),
   AdvisoryController.rejectAdvisory,
+);
+
+router.patch(
+  "/:id/withdraw",
+  authenticate,
+  authorize(Role.ADMIN),
+  AdvisoryController.withdrawAdvisory,
 );
 
 export default router;

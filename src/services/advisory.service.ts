@@ -290,12 +290,12 @@ export class AdvisoryService {
     });
   }
 
-  static async getAdvisoryDrafts(page = 1, limit = 20) {
+  static async getAdvisoriesByStatus(status: AdvisoryStatus, page = 1, limit = 20) {
     const skip = (page - 1) * limit;
 
-    const [drafts, total] = await Promise.all([
+    const [advisories, total] = await Promise.all([
       prisma.advisory.findMany({
-        where: { status: AdvisoryStatus.DRAFT },
+        where: { status },
         include: {
           region: true,
           district: true,
@@ -307,11 +307,11 @@ export class AdvisoryService {
         skip,
         take: limit,
       }),
-      prisma.advisory.count({ where: { status: AdvisoryStatus.DRAFT } }),
+      prisma.advisory.count({ where: { status } }),
     ]);
 
     return {
-      data: drafts,
+      data: advisories,
       meta: {
         total,
         page,
@@ -404,6 +404,21 @@ export class AdvisoryService {
         status: AdvisoryStatus.APPROVED,
         approvedAt: new Date(),
         approvedById: userId,
+      },
+    });
+  }
+
+  static async withdrawAdvisory(advisoryId: string) {
+    if (!advisoryId) {
+      throw new AppError("Invalid advisory id", 400);
+    }
+
+    return prisma.advisory.update({
+      where: { id: advisoryId },
+      data: {
+        status: AdvisoryStatus.DRAFT,
+        approvedAt: null,
+        approvedById: null,
       },
     });
   }

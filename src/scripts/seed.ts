@@ -406,6 +406,91 @@ async function seedReports() {
   }
 }
 
+async function seedAlerts() {
+  const admin = await prisma.user.findFirst({ where: { role: Role.ADMIN } });
+  // Include districts in the fetch so we can link them
+  const regions = await prisma.region.findMany({ 
+    take: 3,
+    include: { districts: true }
+  });
+  
+  if (!admin || regions.length === 0) {
+    console.log("⚠️ Skipping alert seeding: Admin or Regions not found.");
+    return;
+  }
+
+  console.log("🌱 Seeding alerts for approval...");
+
+  // Clear existing alerts to avoid duplicates
+  await prisma.alert.deleteMany({});
+
+  const sampleAlerts = [
+    {
+      targetZone: "Addis Ababa",
+      title: "Malaria Outbreak Warning",
+      message: "Increased malaria cases detected in Addis Ababa. Please take precautions.",
+      severity: "HIGH" as const,
+      disease: "Malaria",
+      status: "Awaiting Review",
+      advisoryContent: "Use bed nets, clear standing water, and seek medical attention if fever persists."
+    },
+    {
+      targetZone: "Dire Dawa",
+      title: "Cholera Alert",
+      message: "Suspected cholera spike in Dire Dawa. Ensure water is boiled.",
+      severity: "CRITICAL" as const,
+      disease: "Cholera",
+      status: "Approved",
+      advisoryContent: "Wash hands frequently, use treated water, and report symptoms immediately."
+    },
+    {
+      targetZone: "Gondar",
+      title: "Measles Notification",
+      message: "Measles cases among children rising in Gondar.",
+      severity: "MEDIUM" as const,
+      disease: "Measles",
+      status: "Awaiting Review",
+      advisoryContent: "Vaccination drive starting Monday. Keep children home if they show rash or fever."
+    }
+  ];
+
+  for (const a of sampleAlerts) {
+    const region = regions[Math.floor(Math.random() * regions.length)];
+    const district = region.districts && region.districts.length > 0 ? region.districts[0] : null;
+
+    // 1. Create a linked Advisory Draft
+    const advisory = await prisma.advisory.create({
+      data: {
+        title: `${a.disease} Health Advisory: ${a.targetZone}`,
+        content: a.advisoryContent,
+        diseaseType: a.disease,
+        regionId: region.id,
+        districtId: district?.id || null,
+        language: "ENGLISH",
+        status: a.status === "Approved" ? "APPROVED" : "DRAFT",
+        riskLevel: a.severity === "CRITICAL" ? "CRITICAL" : a.severity === "HIGH" ? "HIGH" : "MODERATE",
+        generatedByAI: true
+      }
+    });
+
+    // 2. Create the Alert
+    await prisma.alert.create({
+      data: {
+        targetZone: a.targetZone,
+        title: a.title,
+        message: a.message,
+        severity: a.severity,
+        channel: "WEB",
+        isDelivered: a.status === "Approved",
+        advisoryId: advisory.id,
+        aiSuggested: true
+      }
+    });
+  }
+
+  console.log("Seeding alerts and advisories complete.");
+}
+
 async function main() {
   await seedRegionsAndDistricts();
   console.log("✅ Seeded Ethiopia regions and districts");
@@ -415,6 +500,9 @@ async function main() {
 
   await seedReports();
   console.log("✅ Seeded sample disease reports");
+
+  await seedAlerts();
+  console.log("✅ Seeded sample alerts for approval");
 }
 
 main()
