@@ -1,6 +1,6 @@
 import http from "http";
 import app from "./app";
-import { logger } from "./utils/logger";
+import logger from "./utils/logger";
 import { env } from "./config/env.config";
 
 

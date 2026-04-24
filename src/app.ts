@@ -11,7 +11,7 @@ import { v4 as uuidv4 } from "uuid";
 // Centralizes req.id and req.user type augmentations
 import { errorHandler as globalErrorHandler } from "./middlewares/errorHandler";
 import { apiLimiter } from "./middlewares/rateLimiter";
-import { logger } from "./utils/logger";
+import logger from "./utils/logger";
 import router from "./routes/index";
 import { env } from "./config/env.config";
 
@@ -32,7 +32,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 app.use(helmet());
 app.use(hpp());
 app.use(cors({
-  origin: ["http://localhost:5173", "http://localhost:5174"],
+  origin: ["http://localhost:5173", "http://localhost:5174", "https://ethiosentinel-frontend.onrender.com"],
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
   allowedHeaders: ["Content-Type", "Authorization"]
@@ -66,9 +66,9 @@ app.use(compression());
 // 7. HTTP Request Logging
 // ----------------------------------------------------------------------------
 if (env.NODE_ENV !== "production") {
-  app.use(morgan("dev", { stream: { write: (message) => logger.http(message.trim()) } }));
+  app.use(morgan("dev", { stream: { write: (message: string) => logger.http(message.trim()) } }));
 } else {
-  app.use(morgan("combined", { stream: { write: (message) => logger.info(message.trim()) } }));
+  app.use(morgan("combined", { stream: { write: (message: string) => logger.info(message.trim()) } }));
 }
 
 // ----------------------------------------------------------------------------

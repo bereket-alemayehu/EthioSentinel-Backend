@@ -1,6 +1,6 @@
 import swaggerJsdoc from "swagger-jsdoc";
 import swaggerUi from "swagger-ui-express";
-import { Router } from "express";
+import { Router, Request, Response } from "express";
 
 const options: swaggerJsdoc.Options = {
   definition: {
@@ -36,7 +36,7 @@ swaggerRouter.use("/", swaggerUi.serve);
 swaggerRouter.get("/", swaggerUi.setup(specs));
 
 // Add a route to get the JSON representation
-swaggerRouter.get("/json", (req, res) => {
+swaggerRouter.get("/json", (req: Request, res: Response) => {
   res.setHeader("Content-Type", "application/json");
   res.send(specs);
 });
