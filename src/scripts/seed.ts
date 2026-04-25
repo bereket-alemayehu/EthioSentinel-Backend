@@ -378,7 +378,7 @@ async function seedUsers() {
 }
 
 async function seedReports() {
-  const diseases = ["Malaria", "Cholera", "Dengue", "Measles"];
+  const diseases = ["Malaria", "Cholera", "Dengue", "Measles","Ebola","HIV/AIDS"];
   const districts = await prisma.district.findMany({ take: 10 });
   const user = await prisma.user.findFirst({ where: { role: Role.HEW } });
 

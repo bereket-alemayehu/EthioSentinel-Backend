@@ -238,16 +238,16 @@ export class AnalyticsService {
         : {}),
     };
 
-    // Aggregate by district name
+    // Aggregate by district name and diseaseType
     const grouped = await prisma.diseaseReport.groupBy({
-      by: ["district"],
+      by: ["district", "diseaseType"],
       where,
       _sum: { caseCount: true, deathCount: true },
       _count: { id: true },
     });
 
     // Fetch district coordinates
-    const districtNames = grouped.map((g) => g.district);
+    const districtNames = Array.from(new Set(grouped.map((g) => g.district)));
     const districts = await prisma.district.findMany({
       where: {
         name: { in: districtNames },
@@ -265,6 +265,7 @@ export class AnalyticsService {
       const geo = districtMap.get(group.district);
       return {
         district: group.district,
+        diseaseType: group.diseaseType,
         totalCases: group._sum.caseCount ?? 0,
         totalDeaths: group._sum.deathCount ?? 0,
         reportCount: group._count.id,
