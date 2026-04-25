@@ -44,4 +44,15 @@ export class AnalyticsController {
       return sendSuccess(res, result, "Analytics retrieved successfully");
     },
   );
+
+  static getGeoStats = catchAsync(async (req: Request, res: Response) => {
+    const filters = {
+      startDate: req.query.startDate as string | undefined,
+      endDate: req.query.endDate as string | undefined,
+      diseaseType: req.query.diseaseType as string | undefined,
+    };
+
+    const result = await AnalyticsService.getGeoAggregatedReports(filters);
+    return sendSuccess(res, result, "Geo-stats retrieved successfully");
+  });
 }

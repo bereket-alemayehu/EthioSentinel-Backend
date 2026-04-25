@@ -57,8 +57,6 @@ enum AlertSeverity {
 
 enum AlertChannel {
   WEB
-  SMS
-  USSD
   EMAIL
 }
 

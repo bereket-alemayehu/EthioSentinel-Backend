@@ -18,4 +18,15 @@ router.get(
   AnalyticsController.getAggregatedReports,
 );
 
+/**
+ * GET /analytics/geo-stats
+ * Returns case counts grouped by district with coordinates.
+ */
+router.get(
+  "/geo-stats",
+  authenticate,
+  authorize(Role.ADMIN, Role.RESEARCHER),
+  AnalyticsController.getGeoStats,
+);
+
 export default router;
