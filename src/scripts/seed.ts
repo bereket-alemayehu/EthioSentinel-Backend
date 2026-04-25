@@ -377,12 +377,44 @@ async function seedUsers() {
   });
 }
 
+async function seedReports() {
+  const diseases = ["Malaria", "Cholera", "Dengue", "Measles"];
+  const districts = await prisma.district.findMany({ take: 10 });
+  const user = await prisma.user.findFirst({ where: { role: Role.HEW } });
+
+  if (!user) return;
+
+  console.log("🌱 Seeding reports...");
+
+  for (const district of districts) {
+    for (const disease of diseases) {
+      const caseCount = Math.floor(Math.random() * 200);
+      const deathCount = Math.floor(caseCount * 0.05);
+
+      await prisma.diseaseReport.create({
+        data: {
+          district: district.name,
+          diseaseType: disease,
+          reporterId: user.id,
+          caseCount,
+          deathCount,
+          status: "VERIFIED",
+          notes: `Simulated ${disease} report for ${district.name}`,
+        },
+      });
+    }
+  }
+}
+
 async function main() {
   await seedRegionsAndDistricts();
   console.log("✅ Seeded Ethiopia regions and districts");
 
   await seedUsers();
   console.log("✅ Seeded Admin and HEW users");
+
+  await seedReports();
+  console.log("✅ Seeded sample disease reports");
 }
 
 main()

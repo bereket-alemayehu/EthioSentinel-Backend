@@ -218,4 +218,59 @@ export class AnalyticsService {
     const buffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(buffer);
   }
+
+  static async getGeoAggregatedReports(filters: {
+    startDate?: string;
+    endDate?: string;
+    diseaseType?: string;
+  }) {
+    const dateFilter = this.buildDateFilter(filters.startDate, filters.endDate);
+
+    const where = {
+      ...(dateFilter ? { timestamp: dateFilter } : {}),
+      ...(filters.diseaseType
+        ? {
+            diseaseType: {
+              contains: filters.diseaseType,
+              mode: "insensitive" as const,
+            },
+          }
+        : {}),
+    };
+
+    // Aggregate by district name
+    const grouped = await prisma.diseaseReport.groupBy({
+      by: ["district"],
+      where,
+      _sum: { caseCount: true, deathCount: true },
+      _count: { id: true },
+    });
+
+    // Fetch district coordinates
+    const districtNames = grouped.map((g) => g.district);
+    const districts = await prisma.district.findMany({
+      where: {
+        name: { in: districtNames },
+      },
+      select: {
+        name: true,
+        latitude: true,
+        longitude: true,
+      },
+    });
+
+    const districtMap = new Map(districts.map((d) => [d.name, d]));
+
+    return grouped.map((group) => {
+      const geo = districtMap.get(group.district);
+      return {
+        district: group.district,
+        totalCases: group._sum.caseCount ?? 0,
+        totalDeaths: group._sum.deathCount ?? 0,
+        reportCount: group._count.id,
+        latitude: geo?.latitude ? Number(geo.latitude) : null,
+        longitude: geo?.longitude ? Number(geo.longitude) : null,
+      };
+    });
+  }
 }
