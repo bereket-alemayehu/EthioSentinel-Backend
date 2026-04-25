@@ -6,6 +6,10 @@ import { Role } from "../../generated/prisma/enums";
 
 const router = Router();
 
+router.get("/chat/history", authenticate, AdvisoryController.getChatHistory);
+router.post("/chat/message", authenticate, AdvisoryController.sendChatMessage);
+router.delete("/chat/history", authenticate, AdvisoryController.clearChatHistory);
+
 router.post("/symptom-check", AdvisoryController.symptomCheck);
 
 router.post(

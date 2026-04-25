@@ -1,9 +1,29 @@
 import { Request, Response } from "express";
 import { AdvisoryService } from "../services/advisory.service";
+import { ChatService } from "../services/chat.service";
 import { catchAsync } from "../utils/catchAsync";
 import { sendSuccess } from "../utils/response.util";
 
 export class AdvisoryController {
+  static getChatHistory = catchAsync(async (req: Request, res: Response) => {
+    const userId = req.user!.id;
+    const messages = await ChatService.getChatHistory(userId);
+    return sendSuccess(res, messages, "Chat history retrieved");
+  });
+
+  static sendChatMessage = catchAsync(async (req: Request, res: Response) => {
+    const userId = req.user!.id;
+    const { message, language } = req.body as { message?: string; language?: string };
+    const reply = await ChatService.sendMessage({ userId, message: message ?? "", language });
+    return sendSuccess(res, reply, "Chat reply generated");
+  });
+
+  static clearChatHistory = catchAsync(async (req: Request, res: Response) => {
+    const userId = req.user!.id;
+    await ChatService.clearChatHistory(userId);
+    return sendSuccess(res, null, "Chat history cleared");
+  });
+
   static symptomCheck = catchAsync(async (req: Request, res: Response) => {
     const result = AdvisoryService.checkSymptoms(req.body);
     return sendSuccess(res, result, "Symptom assessment completed");

@@ -112,12 +112,28 @@ export class AdvisoryService {
       "This symptom checker is for guidance only and is not a medical diagnosis. Please consult a healthcare professional.";
 
     if (language === "AMHARIC") {
+      const probableDiseaseAm =
+        probableDisease === "Cholera-like illness"
+          ? "የኮሌራ ዓይነት ህመም"
+          : probableDisease === "Malaria-like illness"
+            ? "የወባ ዓይነት ህመም"
+            : probableDisease === "Respiratory infection"
+              ? "የመተንፈሻ አካል ኢንፌክሽን"
+              : "አጠቃላይ ትኩሳት ያለው ህመም";
+      const adviceAm =
+        riskLevel === "HIGH"
+          ? `${location} ለሚመለከት ከፍተኛ አደጋ ምልክቶች ተገኝተዋል። በቅርብ ያለ የጤና ተቋም አስቸኳይ ሕክምና ይፈልጉ፣ የውሃ እጥረትንም ይከላከሉ።`
+          : riskLevel === "MODERATE"
+            ? `${location} ለሚመለከት መጠነኛ አደጋ ምልክቶች ተገኝተዋል። በቅርብ ጊዜ ወደ ጤና ማዕከል በመሄድ ምርመራ ያድርጉ።`
+            : `${location} ለሚመለከት ዝቅተኛ አደጋ ምልክቶች ተገኝተዋል። ዕረፍት ያድርጉ፣ በቂ ውሃ ይጠጡ፣ ምልክቶችን ይከታተሉ። ከባድ ከሆነ ወደ ሕክምና ይሂዱ።`;
+      const disclaimerAm =
+        "ይህ የምልክት ምርመራ ለመመሪያ ብቻ ነው፤ የሕክምና ምርመራ አይደለም። እባክዎ የጤና ባለሙያን ያማክሩ።";
       return {
         selectedSymptoms,
-        probableDisease: `[AMHARIC PLACEHOLDER] ${probableDisease}`,
+        probableDisease: probableDiseaseAm,
         riskLevel,
-        advice: `[AMHARIC PLACEHOLDER] ${adviceEn}`,
-        disclaimer: `[AMHARIC PLACEHOLDER] ${disclaimerEn}`,
+        advice: adviceAm,
+        disclaimer: disclaimerAm,
         language,
       };
     }
@@ -202,20 +218,42 @@ export class AdvisoryService {
     const englishTreatmentAdvice = severityTreatmentMap[normalizedSeverity];
 
     if (language === "AMHARIC") {
+      const amharicSymptoms = [
+        `${diseaseName} የሚያመለክቱ ምልክቶች ትኩሳት፣ ድካም እና የሰውነት ድክመት ሊሆኑ ይችላሉ።`,
+        `በ${location} እንደ ታካሚ ሁኔታ ሳል፣ ተቅማጥ ወይም ማስመለስ ያሉ ምልክቶችን ይከታተሉ።`,
+        `ምልክቶች ከባድ ወይም ቀጣይ ከሆኑ ፈጣን የሕክምና እርዳታ ይፈልጉ።`,
+      ];
+      const amharicPrevention = [
+        `በ${location} በሳሙና እና በንጹህ ውሃ እጅዎን ደጋግመው ይታጠቡ።`,
+        `ከተጠረጠሩ ${diseaseName} ታካሚዎች ጋር ቅርብ ግንኙነትን ይቀንሱ፣ የቤት አየር እንዲለዋወጥ ያድርጉ።`,
+        "የአካባቢዎን የጤና ቢሮ ማስታወቂያዎች ይከተሉ እና የተጠረጠሩ ጉዳዮችን በፍጥነት ያሳውቁ።",
+      ];
+      const amharicTreatment: Record<string, string[]> = {
+        LOW: [
+          "በቤት ውስጥ ዕረፍት ያድርጉ፣ በቂ ፈሳሽ ይውሰዱ፣ በቅርብ ያለ ጤና ተቋም ቀድሞ ያማክሩ።",
+          "መድሃኒት የጤና ሰራተኛ ምክር መሠረት ብቻ ይጠቀሙ።",
+        ],
+        MODERATE: [
+          "ለክሊኒካዊ ምርመራ እና ድጋፍ ሕክምና ወደ ጤና ማዕከል ይሂዱ።",
+          "ምልክት ያላቸውን ሰዎች እስኪፈቀድ ድረስ በቤት ውስጥ ከሌሎች ይለዩ።",
+        ],
+        HIGH: [
+          "ፈጣን የሕክምና ግምገማ በወረዳ ሆስፒታል ይካሄድ።",
+          "ከፍተኛ ተጋላጭነት ያላቸውን ቡድኖች (ህጻናት፣ አረጋውያን፣ ህመም ያላቸው) ቅድሚያ ይስጡ።",
+        ],
+        CRITICAL: [
+          "አስቸኳይ ህክምና ወዲያውኑ ይፈልጉ እና የአካባቢውን ፈጣን ምላሽ ያስነሱ።",
+          "በቁጥጥር ስር የተደረገ ሪፈራል እና ጥብቅ የኢንፌክሽን መከላከል ሂደቶችን ይተግብሩ።",
+        ],
+      };
       return {
         diseaseName,
         severity: normalizedSeverity,
         location,
         language,
-        symptoms: englishSymptoms.map(
-          (item) => `[AMHARIC PLACEHOLDER] ${item}`,
-        ),
-        preventionSteps: englishPreventionSteps.map(
-          (item) => `[AMHARIC PLACEHOLDER] ${item}`,
-        ),
-        treatmentAdvice: englishTreatmentAdvice.map(
-          (item) => `[AMHARIC PLACEHOLDER] ${item}`,
-        ),
+        symptoms: amharicSymptoms,
+        preventionSteps: amharicPrevention,
+        treatmentAdvice: amharicTreatment[normalizedSeverity as keyof typeof amharicTreatment],
       };
     }
 
