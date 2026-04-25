@@ -5,7 +5,17 @@ import { sendSuccess } from "../utils/response.util";
 
 export class AlertController {
   static getAllAlerts = catchAsync(async (req: Request, res: Response) => {
-    const alerts = await AlertService.getAllAlerts();
+    const aiSuggestedRaw = req.query.aiSuggested;
+    const aiSuggested =
+      typeof aiSuggestedRaw === "string"
+        ? aiSuggestedRaw.toLowerCase() === "true"
+          ? true
+          : aiSuggestedRaw.toLowerCase() === "false"
+            ? false
+            : undefined
+        : undefined;
+
+    const alerts = await AlertService.getAllAlerts({ aiSuggested });
     return sendSuccess(res, alerts, "Alerts retrieved successfully");
   });
 

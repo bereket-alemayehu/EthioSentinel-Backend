@@ -57,8 +57,6 @@ enum AlertSeverity {
 
 enum AlertChannel {
   WEB
-  SMS
-  USSD
   EMAIL
 }
 
@@ -175,6 +173,8 @@ model Alert {
   targetZone    String
   diseaseId     Int?
   advisoryId    String?
+  sourceReportId String?
+  aiSuggested   Boolean       @default(false)
   createdById   String?
   title         String
   message       String
@@ -192,4 +192,6 @@ model Alert {
   @@index([targetZone])
   @@index([severity])
   @@index([channel])
+  @@index([aiSuggested])
+  @@index([sourceReportId])
 }

@@ -21,6 +21,8 @@ type AlertManagementView = {
   status: AlertWorkflowStatus;
   targetZone: string;
   isDelivered: boolean;
+  aiSuggested: boolean;
+  sourceReportId: string | null;
 };
 
 type AlertNotificationDetails = {
@@ -40,6 +42,8 @@ export class AlertService {
     message: string;
     isDelivered: boolean;
     targetZone: string;
+    aiSuggested: boolean;
+    sourceReportId: string | null;
     disease: { name: string } | null;
     advisory: { content: string } | null;
   }): AlertManagementView {
@@ -52,6 +56,8 @@ export class AlertService {
       status: alert.isDelivered ? "Approved" : "Draft",
       targetZone: alert.targetZone,
       isDelivered: alert.isDelivered,
+      aiSuggested: alert.aiSuggested,
+      sourceReportId: alert.sourceReportId,
     };
   }
 
@@ -127,8 +133,14 @@ export class AlertService {
     });
   }
 
-  static async getAllAlerts() {
+  static async getAllAlerts(filters?: { aiSuggested?: boolean }) {
+    const where =
+      typeof filters?.aiSuggested === "boolean"
+        ? { aiSuggested: filters.aiSuggested }
+        : undefined;
+
     const alerts = await prisma.alert.findMany({
+      where,
       include: {
         disease: true,
         advisory: true,
@@ -159,7 +171,10 @@ export class AlertService {
     }
 
     // BR-02: block broadcast if the linked advisory is not yet APPROVED
-    if (existingAlert.advisory && existingAlert.advisory.status !== AdvisoryStatus.APPROVED) {
+    if (
+      existingAlert.advisory &&
+      existingAlert.advisory.status !== AdvisoryStatus.APPROVED
+    ) {
       throw new AppError(
         "Cannot approve alert: linked advisory must be APPROVED before broadcast",
         422,
@@ -218,24 +233,28 @@ export class AlertService {
     targetZone?: string;
     diseaseId?: number;
     advisoryId?: string;
+    sourceReportId?: string;
     createdById?: string;
     title?: string;
     message?: string;
     severity?: string;
     channel?: string;
     isDelivered?: boolean;
+    aiSuggested?: boolean;
     userId: string;
   }) {
     const {
       targetZone,
       diseaseId,
       advisoryId,
+      sourceReportId,
       createdById,
       title,
       message,
       severity,
       channel,
       isDelivered,
+      aiSuggested,
       userId,
     } = data;
 
@@ -268,6 +287,8 @@ export class AlertService {
         targetZone,
         diseaseId,
         advisoryId,
+        sourceReportId,
+        aiSuggested: aiSuggested ?? false,
         createdById: createdById ?? userId,
         title,
         message,
