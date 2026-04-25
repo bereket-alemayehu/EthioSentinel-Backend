@@ -29,4 +29,9 @@ export const env = cleanEnv(process.env, {
   AI_SERVICE_ZSCORE_PATH: str({ default: "/anomaly/zscore" }),
   AI_WEBHOOK_TOKEN: str({ default: "" }),
   AI_INTERNAL_TOKEN: str({ default: "" }),
+  AI_CHAT_PROVIDER: str({ default: "HUGGINGFACE" }),
+  AI_CHAT_MODEL: str({ default: "HuggingFaceH4/zephyr-7b-beta" }),
+  AI_CHAT_BASE_URL: str({ default: "https://api-inference.huggingface.co/models" }),
+  AI_CHAT_API_KEY: str({ default: "" }),
+  GEMINI_API_KEY: str({ default: "" }),
 });

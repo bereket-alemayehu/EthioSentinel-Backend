@@ -60,6 +60,11 @@ enum AlertChannel {
   EMAIL
 }
 
+enum ChatRole {
+  USER
+  ASSISTANT
+}
+
 model Region {
   id              Int        @id @default(autoincrement())
   name            String     @unique
@@ -101,10 +106,36 @@ model User {
   submittedReports   DiseaseReport[] @relation("ReportSubmittedBy")
   approvedAdvisories Advisory[]      @relation("AdvisoryApprovedBy")
   createdAlerts      Alert[]         @relation("AlertCreatedBy")
+  chatConversations  ChatConversation[]
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 
   @@index([role])
+}
+
+model ChatConversation {
+  id        String        @id @default(uuid())
+  userId    String
+  title     String?
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  ChatMessage[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([userId, updatedAt])
+}
+
+model ChatMessage {
+  id             String           @id @default(uuid())
+  conversationId String
+  role           ChatRole
+  content        String
+  language       String           @default("ENGLISH")
+  modelProvider  String?
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime         @default(now())
+
+  @@index([conversationId, createdAt])
 }
 
 model Disease {
