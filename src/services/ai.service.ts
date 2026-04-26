@@ -3,7 +3,7 @@ import https from "https";
 import { URL } from "url";
 import { prisma } from "../lib/prisma";
 import { env } from "../config/env.config";
-import logger from "../utils/logger";
+import Logger from "../utils/logger";
 import { EmailSender } from "../utils/EmailSender";
 
 type WeeklyAggregate = {
@@ -125,7 +125,7 @@ export class AIService {
     });
 
     if (!report) {
-      logger.warn("Skipping AI anomaly call: report not found", { reportId });
+    Logger.warn("Skipping AI anomaly call: report not found", { reportId });
       return null;
     }
 
@@ -277,7 +277,7 @@ export class AIService {
     });
 
     if (!districtRow) {
-      logger.warn("AI advisory draft skipped: district not found", {
+      Logger.warn("AI advisory draft skipped: district not found", {
         reportId: input.reportId,
         district: input.district,
       });
@@ -333,7 +333,7 @@ export class AIService {
     });
 
     if (existingAlert) {
-      logger.info("Skipping duplicate AI alert for source report", {
+      Logger.info("Skipping duplicate AI alert for source report", {
         reportId: input.reportId,
         existingAlertId: existingAlert.id,
       });
@@ -389,7 +389,7 @@ export class AIService {
       },
     });
 
-    logger.warn("AI anomaly admin notification created", {
+    Logger.warn("AI anomaly admin notification created", {
       reportId: input.reportId,
       alertId: createdAlert.id,
       advisoryDraftId: input.advisoryDraftId ?? null,
@@ -413,7 +413,7 @@ export class AIService {
       return;
     }
     if (payload.std_dev <= 0) {
-      logger.info("Skipping AI anomaly trigger due to zero variance baseline", {
+      Logger.info("Skipping AI anomaly trigger due to zero variance baseline", {
         reportId,
         currentCases: payload.current_cases,
         historicalMean: payload.historical_mean,
@@ -477,7 +477,7 @@ export class AIService {
             }
           }
 
-          logger.info("AI anomaly trigger sent successfully", {
+          Logger.info("AI anomaly trigger sent successfully", {
             reportId,
             endpoint,
             attempt,
@@ -488,7 +488,7 @@ export class AIService {
         }
 
         lastErrorMessage = `AI service returned status ${response.statusCode}`;
-        logger.warn("AI anomaly trigger returned non-success status", {
+        Logger.warn("AI anomaly trigger returned non-success status", {
           reportId,
           attempt,
           statusCode: response.statusCode,
@@ -497,7 +497,7 @@ export class AIService {
       } catch (error) {
         lastErrorMessage =
           error instanceof Error ? error.message : String(error);
-        logger.warn("AI anomaly trigger attempt failed", {
+      Logger.warn("AI anomaly trigger attempt failed", {
           reportId,
           attempt,
           error: lastErrorMessage,
@@ -511,7 +511,7 @@ export class AIService {
       }
     }
 
-    logger.error("AI anomaly trigger exhausted retries", {
+    Logger.error("AI anomaly trigger exhausted retries", {
       reportId,
       endpoint,
       attempts: env.AI_SERVICE_RETRY_COUNT,
@@ -549,7 +549,7 @@ export class AIService {
       select: { id: true },
     });
 
-    logger.info("NLP advisory draft persisted", {
+    Logger.info("NLP advisory draft persisted", {
       id: advisory.id,
       diseaseType: payload.diseaseType,
       language: payload.language,

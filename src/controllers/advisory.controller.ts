@@ -44,8 +44,15 @@ export class AdvisoryController {
   static getDraftAdvisories = catchAsync(async (req: Request, res: Response) => {
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
-    const result = await AdvisoryService.getAdvisoryDrafts(page, limit);
+    const result = await AdvisoryService.getAdvisoriesByStatus("DRAFT" as any, page, limit);
     return sendSuccess(res, result, "Draft advisories retrieved successfully");
+  });
+
+  static getApprovedAdvisories = catchAsync(async (req: Request, res: Response) => {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+    const result = await AdvisoryService.getAdvisoriesByStatus("APPROVED" as any, page, limit);
+    return sendSuccess(res, result, "Approved advisories retrieved successfully");
   });
 
   static rejectAdvisory = catchAsync(async (req: Request, res: Response) => {
@@ -64,5 +71,11 @@ export class AdvisoryController {
     const userId = req.user!.id;
     const advisory = await AdvisoryService.approveAdvisory(advisoryId, userId);
     return sendSuccess(res, advisory, "Advisory approved successfully");
+  });
+
+  static withdrawAdvisory = catchAsync(async (req: Request, res: Response) => {
+    const advisoryId = String(req.params.id);
+    const advisory = await AdvisoryService.withdrawAdvisory(advisoryId);
+    return sendSuccess(res, advisory, "Advisory withdrawn successfully");
   });
 }
