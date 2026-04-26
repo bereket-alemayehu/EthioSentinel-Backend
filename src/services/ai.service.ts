@@ -3,7 +3,11 @@ import https from "https";
 import { URL } from "url";
 import { prisma } from "../lib/prisma";
 import { env } from "../config/env.config";
+<<<<<<< HEAD
 import Logger from "../utils/logger";
+=======
+import logger from "../utils/logger";
+>>>>>>> f1f3ffa (feat(chat): route advisory chatbot through backend with persisted history)
 import { EmailSender } from "../utils/EmailSender";
 
 type WeeklyAggregate = {
