@@ -1,4 +1,4 @@
-import type { Language } from "../../generated/prisma/enums";
+import { Language } from "@prisma/client";
 
 export interface IRegion {
   id: number;

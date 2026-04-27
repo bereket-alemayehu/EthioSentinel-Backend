@@ -1,4 +1,4 @@
-import type { ReportSource, ReportStatus } from "../../generated/prisma/enums";
+import type { ReportSource, ReportStatus } from "@prisma/client";
 
 export interface IDisease {
   id: number;

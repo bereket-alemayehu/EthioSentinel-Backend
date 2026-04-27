@@ -1,5 +1,5 @@
 import { prisma } from "../lib/prisma";
-import { ReportStatus, Role } from "../../generated/prisma/enums";
+import { ReportStatus, Role } from "@prisma/client";
 import { AppError } from "../utils/AppError";
 import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";

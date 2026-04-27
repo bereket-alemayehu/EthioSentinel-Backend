@@ -1,5 +1,5 @@
 import { prisma } from "../lib/prisma";
-import { AdvisoryStatus } from "../../generated/prisma/enums";
+import { AdvisoryStatus } from "@prisma/client";
 import { AppError } from "../utils/AppError";
 import logger from "../utils/logger";
 import { EmailSender } from "../utils/EmailSender";

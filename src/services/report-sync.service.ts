@@ -1,5 +1,5 @@
 import { prisma } from "../lib/prisma";
-import { ReportStatus, Role } from "../../generated/prisma/enums";
+import { ReportStatus, Role } from "@prisma/client";
 import { AIService } from "./ai.service";
 import { AlertService } from "./alert.service";
 import Logger from "../utils/logger";
