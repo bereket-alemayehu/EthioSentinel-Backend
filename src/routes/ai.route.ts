@@ -3,7 +3,7 @@ import { AIController } from "../controllers/ai.controller";
 import { authenticate } from "../middlewares/authenticate";
 import { authorize } from "../middlewares/authorize";
 import { authenticateInternal } from "../middlewares/authenticateInternal";
-import { Role } from "../../generated/prisma/enums";
+import { Role } from "@prisma/client";
 
 const router = Router();
 

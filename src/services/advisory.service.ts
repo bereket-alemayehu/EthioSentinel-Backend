@@ -2,7 +2,7 @@ import { prisma } from "../lib/prisma";
 import {
   AdvisoryStatus,
   Language,
-} from "../../generated/prisma/enums";
+} from "@prisma/client";
 import { AppError } from "../utils/AppError";
 
 type SupportedLanguage = "ENGLISH" | "AMHARIC";

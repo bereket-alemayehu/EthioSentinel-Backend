@@ -1,4 +1,4 @@
-import type { AdvisoryStatus, RiskLevel, AlertSeverity, AlertChannel, Language } from "../../generated/prisma/enums";
+import type { AdvisoryStatus, RiskLevel, AlertSeverity, AlertChannel, Language } from "@prisma/client";
 
 export interface IAdvisory {
   id: number;

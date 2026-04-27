@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import type { Role } from "../../generated/prisma/enums";
+import { Role } from "@prisma/client";
 import { AppError } from "../utils/AppError";
 
 /**

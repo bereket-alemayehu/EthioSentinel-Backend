@@ -1,1 +1,1 @@
-export * from "../../generated/prisma/enums";
+import { Language, ReportSource, Role } from "@prisma/client";
