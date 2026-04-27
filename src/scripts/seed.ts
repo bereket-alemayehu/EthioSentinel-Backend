@@ -1,6 +1,7 @@
 import { Language, Role } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import bcrypt from "bcryptjs";
+import { seedDiseases } from "./seed-diseases";
 
 type DistrictSeed = {
   name: string;
@@ -492,6 +493,9 @@ async function seedAlerts() {
 }
 
 async function main() {
+  await seedDiseases();
+  console.log("✅ Seeded master diseases list");
+
   await seedRegionsAndDistricts();
   console.log("✅ Seeded Ethiopia regions and districts");
 
