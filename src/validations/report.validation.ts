@@ -4,6 +4,7 @@ import { sanitizeNotes } from "../utils/pii.util";
 type ReportInput = {
   district?: unknown;
   diseaseType?: unknown;
+  diseaseId?: unknown;
   caseCount?: unknown;
   deathCount?: unknown;
   notes?: unknown;
@@ -13,6 +14,7 @@ type ReportInput = {
 type ValidatedReportInput = {
   district: string;
   diseaseType: string;
+  diseaseId: number | undefined;
   caseCount: number;
   deathCount: number;
   notes: string | undefined;
@@ -58,6 +60,7 @@ export function validateAndSanitizeReport(
   }
 
   const isOfflineCached = Boolean(input.isOfflineCached ?? false);
+  const diseaseId = input.diseaseId ? Number(input.diseaseId) : undefined;
 
-  return { district, diseaseType, caseCount, deathCount, notes, isOfflineCached };
+  return { district, diseaseType, diseaseId, caseCount, deathCount, notes, isOfflineCached };
 }

@@ -130,27 +130,45 @@ export class ReportService {
     return Buffer.from(buffer);
   }
 
-  static async getAllReports() {
-    return prisma.diseaseReport.findMany({
-      include: {
-        reporter: {
-          select: {
-            id: true,
-            username: true,
-            role: true,
-            // BR-01: email omitted from list output to avoid PII exposure
+  static async getAllReports(filters?: { reporterId?: string }, page: number = 1, limit: number = 10) {
+    const where = filters?.reporterId ? { reporterId: filters.reporterId } : {};
+    const skip = (page - 1) * limit;
+
+    const [reports, total] = await Promise.all([
+      prisma.diseaseReport.findMany({
+        where,
+        include: {
+          reporter: {
+            select: {
+              id: true,
+              username: true,
+              role: true,
+            },
           },
+          disease: true,
         },
-      },
-      orderBy: {
-        timestamp: "desc",
-      },
-    });
+        orderBy: {
+          timestamp: "desc",
+        },
+        skip,
+        take: limit,
+      }),
+      prisma.diseaseReport.count({ where }),
+    ]);
+
+    return {
+      reports,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   static async createReport(data: {
     district?: string;
     diseaseType?: string;
+    diseaseId?: number;
     reporterId?: string;
     caseCount?: number;
     deathCount?: number;
@@ -162,6 +180,7 @@ export class ReportService {
     const {
       district,
       diseaseType,
+      diseaseId,
       reporterId,
       caseCount,
       deathCount,
@@ -187,6 +206,7 @@ export class ReportService {
         data: {
           district: sanitized.district,
           diseaseType: sanitized.diseaseType,
+          diseaseId: diseaseId || sanitized.diseaseId,
           reporterId: effectiveReporterId,
           caseCount: sanitized.caseCount,
           deathCount: sanitized.deathCount,
@@ -238,5 +258,60 @@ export class ReportService {
     });
 
     return report;
+  }
+
+  static async updateReport(id: string, data: {
+    district?: string;
+    diseaseType?: string;
+    diseaseId?: number;
+    caseCount?: number;
+    deathCount?: number;
+    notes?: string;
+    userId: string;
+  }) {
+    const report = await prisma.diseaseReport.findUnique({
+      where: { id },
+    });
+
+    if (!report) throw new AppError("Report not found", 404);
+    if (report.reporterId !== data.userId) {
+      throw new AppError("Unauthorized to update this report", 403);
+    }
+
+    const sanitized = validateAndSanitizeReport({
+      district: data.district,
+      diseaseType: data.diseaseType,
+      caseCount: data.caseCount,
+      deathCount: data.deathCount,
+      notes: data.notes,
+    });
+
+    return prisma.diseaseReport.update({
+      where: { id },
+      data: {
+        district: sanitized.district,
+        diseaseType: sanitized.diseaseType,
+        diseaseId: data.diseaseId,
+        caseCount: sanitized.caseCount,
+        deathCount: sanitized.deathCount,
+        notes: sanitized.notes,
+        isMortalityPriority: sanitized.deathCount > 0,
+      },
+    });
+  }
+
+  static async deleteReport(id: string, userId: string) {
+    const report = await prisma.diseaseReport.findUnique({
+      where: { id },
+    });
+
+    if (!report) throw new AppError("Report not found", 404);
+    if (report.reporterId !== userId) {
+      throw new AppError("Unauthorized to delete this report", 403);
+    }
+
+    return prisma.diseaseReport.delete({
+      where: { id },
+    });
   }
 }

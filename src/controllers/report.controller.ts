@@ -41,8 +41,17 @@ export class ReportController {
   });
 
   static getAllReports = catchAsync(async (req: Request, res: Response) => {
-    const reports = await ReportService.getAllReports();
-    return sendSuccess(res, reports, "Reports retrieved successfully");
+    const filters: { reporterId?: string } = {};
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    
+    // HEWs should only see their own reports
+    if (req.user?.role === "HEW") {
+      filters.reporterId = req.user.id;
+    }
+    
+    const result = await ReportService.getAllReports(filters, page, limit);
+    return sendSuccess(res, result, "Reports retrieved successfully");
   });
 
   static createReport = catchAsync(async (req: Request, res: Response) => {
@@ -60,5 +69,20 @@ export class ReportController {
       req.user!,
     );
     return sendSuccess(res, result, "Offline sync completed", 207);
+  });
+
+  static updateReport = catchAsync(async (req: Request, res: Response) => {
+    const id = String(req.params.id);
+    const report = await ReportService.updateReport(id, {
+      ...req.body,
+      userId: req.user!.id,
+    });
+    return sendSuccess(res, report, "Report updated successfully");
+  });
+
+  static deleteReport = catchAsync(async (req: Request, res: Response) => {
+    const id = String(req.params.id);
+    await ReportService.deleteReport(id, req.user!.id);
+    return sendSuccess(res, null, "Report deleted successfully");
   });
 }
