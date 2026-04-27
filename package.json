@@ -11,7 +11,7 @@
     "generate": "prisma generate --config prisma.config.ts",
     "db:push": "prisma db push --config prisma.config.ts",
     "studio": "prisma studio --config prisma.config.ts",
-    "seed": "ts-node --files src/scripts/seed.ts"
+    "seed": "tsx src/scripts/seed.ts"
   },
   "keywords": [],
   "author": "",
@@ -56,6 +56,7 @@
     "prisma": "^7.4.2",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
+    "tsx": "^4.21.0",
     "uuid": "^13.0.0",
     "winston": "^3.19.0"
   },
