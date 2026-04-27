@@ -35,4 +35,18 @@ router.post(
   ReportController.syncOfflineBatch,
 );
 
+router.patch(
+  "/:id",
+  authenticate,
+  authorize(Role.ADMIN, Role.HEW),
+  ReportController.updateReport,
+);
+
+router.delete(
+  "/:id",
+  authenticate,
+  authorize(Role.ADMIN, Role.HEW),
+  ReportController.deleteReport,
+);
+
 export default router;

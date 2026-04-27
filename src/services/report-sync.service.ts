@@ -47,6 +47,7 @@ export class ReportSyncService {
       index: number;
       district: string;
       diseaseType: string;
+      diseaseId: number | undefined;
       caseCount: number;
       deathCount: number;
       notes: string | undefined;
@@ -87,6 +88,7 @@ export class ReportSyncService {
           data: {
             district: item.district,
             diseaseType: item.diseaseType,
+            diseaseId: item.diseaseId,
             reporterId: effectiveReporterId,
             caseCount: item.caseCount,
             deathCount: item.deathCount,

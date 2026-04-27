@@ -11,6 +11,7 @@ enum Role {
   CITIZEN
   HEW
   ADMIN
+  RESEARCHER
 }
 
 enum Language {
@@ -141,10 +142,12 @@ model Disease {
   id             Int             @id @default(autoincrement())
   name           String          @unique
   slug           String          @unique
+  code           String          @unique
   description    String?
   symptomProfile String?
   isActive       Boolean         @default(true)
   alerts         Alert[]
+  reports        DiseaseReport[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 }
@@ -153,6 +156,7 @@ model DiseaseReport {
   id                  String         @id @default(uuid())
   district            String
   diseaseType         String
+  diseaseId           Int?
   reporterId          String
   timestamp           DateTime       @default(now())
   caseCount           Int            @default(0)
@@ -161,6 +165,7 @@ model DiseaseReport {
   status              ReportStatus   @default(PENDING)
   isMortalityPriority Boolean        @default(false)
   notes               String?
+  disease             Disease?       @relation(fields: [diseaseId], references: [id], onDelete: SetNull)
   reporter            User           @relation("ReportSubmittedBy", fields: [reporterId], references: [id], onDelete: Cascade)
   advisories          Advisory[]
   createdAt           DateTime       @default(now())

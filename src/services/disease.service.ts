@@ -11,20 +11,22 @@ export class DiseaseService {
   static async createDisease(data: {
     name?: string;
     slug?: string;
+    code?: string;
     description?: string;
     symptomProfile?: string;
     isActive?: boolean;
   }) {
-    const { name, slug, description, symptomProfile, isActive } = data;
+    const { name, slug, code, description, symptomProfile, isActive } = data;
 
-    if (!name || !slug) {
-      throw new AppError("Name and slug are required", 400);
+    if (!name || !slug || !code) {
+      throw new AppError("Name, slug, and code are required", 400);
     }
 
     return prisma.disease.create({
       data: {
         name,
         slug,
+        code,
         description,
         symptomProfile,
         isActive: isActive ?? true,
