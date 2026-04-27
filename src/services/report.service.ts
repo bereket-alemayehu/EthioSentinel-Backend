@@ -134,7 +134,10 @@ export class ReportService {
     const where = filters?.reporterId ? { reporterId: filters.reporterId } : {};
     const skip = (page - 1) * limit;
 
-    const [reports, total] = await Promise.all([
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+
+    const [reports, total, dailyCount] = await Promise.all([
       prisma.diseaseReport.findMany({
         where,
         include: {
@@ -154,11 +157,20 @@ export class ReportService {
         take: limit,
       }),
       prisma.diseaseReport.count({ where }),
+      prisma.diseaseReport.count({
+        where: {
+          ...where,
+          timestamp: {
+            gte: todayStart,
+          },
+        },
+      }),
     ]);
 
     return {
       reports,
       total,
+      dailyCount,
       page,
       limit,
       totalPages: Math.ceil(total / limit),

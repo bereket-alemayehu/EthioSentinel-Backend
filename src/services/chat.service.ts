@@ -1,10 +1,8 @@
-import http from "http";
-import https from "https";
-import { URL } from "url";
 import { prisma } from "../lib/prisma";
 import { env } from "../config/env.config";
 import { AppError } from "../utils/AppError";
 import Logger from "../utils/logger";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 type AppLanguage = "ENGLISH" | "AMHARIC";
 
@@ -18,7 +16,7 @@ type PersistedChatMessage = {
   createdAt: Date;
 };
 
-const SYSTEM_PROMPT = `You are EthioSentinel Assistant for Ethiopia public health use cases.
+const SYSTEM_PROMPT = `You are ${env.CHAT_BOT_NAME} for Ethiopia public health use cases.
 - Give concise, practical, safe health guidance.
 - You are not a doctor; always include a short medical disclaimer.
 - Use prior chat history to personalize replies for this user.
@@ -43,44 +41,6 @@ export class ChatService {
     ].join(" ");
   }
 
-  private static async postJson(urlString: string, payload: unknown, headers?: Record<string, string>) {
-    const url = new URL(urlString);
-    const client = url.protocol === "https:" ? https : http;
-    const requestBody = JSON.stringify(payload);
-
-    return new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
-      const req = client.request(
-        {
-          method: "POST",
-          protocol: url.protocol,
-          hostname: url.hostname,
-          port: url.port || undefined,
-          path: `${url.pathname}${url.search}`,
-          headers: {
-            "Content-Type": "application/json",
-            "Content-Length": Buffer.byteLength(requestBody),
-            ...(headers ?? {}),
-          },
-          timeout: env.AI_SERVICE_TIMEOUT_MS,
-        },
-        (res) => {
-          const chunks: Buffer[] = [];
-          res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-          res.on("end", () => {
-            resolve({
-              statusCode: res.statusCode ?? 500,
-              body: Buffer.concat(chunks).toString("utf8"),
-            });
-          });
-        },
-      );
-
-      req.on("timeout", () => req.destroy(new Error("Chat provider request timed out")));
-      req.on("error", reject);
-      req.write(requestBody);
-      req.end();
-    });
-  }
 
   private static async getOrCreateConversation(userId: string) {
     const latest = await prisma.chatConversation.findFirst({
@@ -164,73 +124,47 @@ export class ChatService {
     };
   }
 
-  private static async requestHuggingFaceReply(input: { prompt: string; language: AppLanguage }) {
-    const modelPath = `${env.AI_CHAT_BASE_URL.replace(/\/$/, "")}/${encodeURIComponent(env.AI_CHAT_MODEL)}`;
-    const response = await this.postJson(
-      modelPath,
-      {
-        inputs: input.prompt,
-        parameters: {
-          max_new_tokens: 350,
-          temperature: 0.4,
-          return_full_text: false,
-        },
-      },
-      env.AI_CHAT_API_KEY ? { Authorization: `Bearer ${env.AI_CHAT_API_KEY}` } : undefined,
-    );
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw new Error(`HuggingFace returned status ${response.statusCode}`);
-    }
-
-    const parsed = JSON.parse(response.body) as Array<{ generated_text?: string }>;
-    const generated = parsed?.[0]?.generated_text?.trim();
-    if (!generated) {
-      throw new Error("Empty HuggingFace response");
-    }
-    return generated;
-  }
 
   private static async requestGeminiReply(input: { prompt: string }) {
     if (!env.GEMINI_API_KEY) {
       throw new Error("GEMINI_API_KEY is missing");
     }
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`;
-    const response = await this.postJson(endpoint, {
-      contents: [{ role: "user", parts: [{ text: input.prompt }] }],
-      generationConfig: { maxOutputTokens: 700, temperature: 0.4 },
-    });
+    const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
+    const modelsToTry = ["gemini-flash-latest", ];
+    let lastError: any = null;
 
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw new Error(`Gemini returned status ${response.statusCode}`);
+    for (const modelName of modelsToTry) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const model = genAI.getGenerativeModel({ model: modelName });
+          const result = await model.generateContent(input.prompt);
+          const response = result.response;
+          const text = response.text().trim();
+
+          if (text) return text;
+        } catch (error: any) {
+          lastError = error;
+          const is503 = error.message?.includes("503") || error.status === 503;
+          const is404 = error.message?.includes("404") || error.status === 404;
+
+          if (is404) break; // Try next model immediately if 404
+          if (!is503 || attempt === 3) break; // Don't retry if not 503 or last attempt
+
+          Logger.warn(`Gemini ${modelName} failed with 503, retrying... (attempt ${attempt}/3)`);
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
+        }
+      }
     }
 
-    const parsed = JSON.parse(response.body) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
-
-    const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-    if (!text) {
-      throw new Error("Empty Gemini response");
-    }
-    return text;
+    Logger.error("All Gemini models failed", { error: lastError?.message });
+    throw lastError || new Error("All Gemini models failed");
   }
 
   private static async requestAssistantReply(input: {
     prompt: string;
     language: AppLanguage;
   }): Promise<{ text: string; provider: string }> {
-    const preferred = String(env.AI_CHAT_PROVIDER).toUpperCase();
-    if (preferred === "HUGGINGFACE") {
-      try {
-        const text = await this.requestHuggingFaceReply(input);
-        return { text, provider: "HUGGINGFACE" };
-      } catch (error) {
-        Logger.warn("HuggingFace chat failed, falling back to Gemini", { error });
-      }
-    }
-
     const text = await this.requestGeminiReply({ prompt: input.prompt });
     return { text, provider: "GEMINI" };
   }
