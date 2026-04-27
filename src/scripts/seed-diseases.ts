@@ -1,6 +1,6 @@
 import { prisma } from "../lib/prisma";
 
-async function seedDiseases() {
+export async function seedDiseases() {
   const diseases = [
     { name: "Malaria", code: "MAL-01", slug: "malaria", description: "Fever, chills, and flu-like illness caused by a parasite." },
     { name: "Cholera", code: "CHO-02", slug: "cholera", description: "Acute diarrheal infection caused by ingestion of contaminated food or water." },
@@ -30,11 +30,13 @@ async function seedDiseases() {
   console.log("Disease seeding complete.");
 }
 
-seedDiseases()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+if (require.main === module) {
+  seedDiseases()
+    .catch((e) => {
+      console.error(e);
+      process.exit(1);
+    })
+    .finally(async () => {
+      await prisma.$disconnect();
+    });
+}
