@@ -11,7 +11,8 @@
     "generate": "prisma generate --config prisma.config.ts",
     "db:push": "prisma db push --config prisma.config.ts",
     "studio": "prisma studio --config prisma.config.ts",
-    "seed": "tsx src/scripts/seed.ts"
+    "seed": "ts-node --files src/scripts/seed.ts",
+    "test:zscore": "ts-node --files src/scripts/test-zscore-spike.ts"
   },
   "keywords": [],
   "author": "",
