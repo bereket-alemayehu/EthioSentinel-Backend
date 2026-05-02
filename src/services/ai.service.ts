@@ -38,7 +38,7 @@ type NlpAdvisoryDraftPayload = {
 };
 
 export class AIService {
-  private static readonly LOOKBACK_DAYS = 56;
+  private static readonly LOOKBACK_DAYS = 7;
 
   private static getWeekStartUTC(date: Date): Date {
     const utcDate = new Date(
@@ -125,7 +125,7 @@ export class AIService {
     });
 
     if (!report) {
-    Logger.warn("Skipping AI anomaly call: report not found", { reportId });
+      Logger.warn("Skipping AI anomaly call: report not found", { reportId });
       return null;
     }
 
@@ -151,7 +151,9 @@ export class AIService {
       },
     });
 
-    const caseValues = historicalReports.map((entry) => entry.caseCount);
+    const caseValues = historicalReports.map(
+      (entry: { caseCount: number }) => entry.caseCount,
+    );
     const stats = this.computeStats(caseValues);
 
     return {
@@ -369,7 +371,9 @@ export class AIService {
       select: { email: true },
     });
 
-    const emails = admins.map((u) => u.email).filter(Boolean);
+    const emails = admins
+      .map((u: { email: string | null }) => u.email)
+      .filter(Boolean) as string[];
     const emailResult = await EmailSender.sendBulkAlertApprovalEmails(emails, {
       disease: input.diseaseType,
       location: input.district,
@@ -497,7 +501,7 @@ export class AIService {
       } catch (error) {
         lastErrorMessage =
           error instanceof Error ? error.message : String(error);
-      Logger.warn("AI anomaly trigger attempt failed", {
+        Logger.warn("AI anomaly trigger attempt failed", {
           reportId,
           attempt,
           error: lastErrorMessage,
