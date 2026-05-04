@@ -21,6 +21,28 @@ type ZScorePayload = {
   std_dev: number;
 };
 
+type ZScoreContext = {
+  payload: ZScorePayload;
+  sampleSize: number;
+  lookbackStart: Date;
+  lookbackEnd: Date;
+};
+
+type AdHocZScoreResult = {
+  district: string;
+  diseaseType: string;
+  currentCases: number;
+  historicalMean: number;
+  stdDev: number;
+  zScore?: number;
+  classification: "ANOMALY" | "NORMAL";
+  sampleSize: number;
+  lookbackStart: Date;
+  lookbackEnd: Date;
+  thresholdSigma: number;
+  signalId?: string;
+};
+
 type ZScoreApiResponse = {
   method?: string;
   z_score?: number;
@@ -111,7 +133,7 @@ export class AIService {
 
   private static async buildZScorePayload(
     reportId: string,
-  ): Promise<ZScorePayload | null> {
+  ): Promise<ZScoreContext | null> {
     const report = await prisma.diseaseReport.findUnique({
       where: { id: reportId },
       select: {
@@ -157,10 +179,15 @@ export class AIService {
     const stats = this.computeStats(caseValues);
 
     return {
-      method: "zscore",
-      current_cases: report.caseCount,
-      historical_mean: Number(stats.meanCases.toFixed(4)),
-      std_dev: Number(stats.stdDevCases.toFixed(4)),
+      payload: {
+        method: "zscore",
+        current_cases: report.caseCount,
+        historical_mean: Number(stats.meanCases.toFixed(4)),
+        std_dev: Number(stats.stdDevCases.toFixed(4)),
+      },
+      sampleSize: stats.sampleSize,
+      lookbackStart,
+      lookbackEnd: report.timestamp,
     };
   }
 
@@ -325,7 +352,7 @@ export class AIService {
     historicalMean: number;
     zScore?: number;
     advisoryDraftId?: string;
-  }): Promise<void> {
+  }): Promise<string | undefined> {
     const existingAlert = await prisma.alert.findFirst({
       where: {
         aiSuggested: true,
@@ -339,7 +366,7 @@ export class AIService {
         reportId: input.reportId,
         existingAlertId: existingAlert.id,
       });
-      return;
+      return existingAlert.id;
     }
 
     const severity = this.getSeverityFromZScore(input.zScore);
@@ -403,6 +430,8 @@ export class AIService {
       delivered: emailResult.delivered,
       failed: emailResult.failed,
     });
+
+    return createdAlert.id;
   }
 
   static enqueueZScoreAnomalyTrigger(reportId: string): void {
@@ -412,10 +441,11 @@ export class AIService {
   }
 
   static async triggerZScoreAnomaly(reportId: string): Promise<void> {
-    const payload = await this.buildZScorePayload(reportId);
-    if (!payload) {
+    const context = await this.buildZScorePayload(reportId);
+    if (!context) {
       return;
     }
+    const { payload, sampleSize, lookbackStart, lookbackEnd } = context;
     if (payload.std_dev <= 0) {
       Logger.info("Skipping AI anomaly trigger due to zero variance baseline", {
         reportId,
@@ -448,37 +478,59 @@ export class AIService {
               ? parsedResponse.z_score
               : undefined;
 
-          if (classification === "ANOMALY") {
-            const report = await prisma.diseaseReport.findUnique({
-              where: { id: reportId },
-              select: {
-                id: true,
-                diseaseType: true,
-                district: true,
-                caseCount: true,
-              },
+          let advisoryDraftId: string | undefined;
+          let alertId: string | undefined;
+
+          const reportRow = await prisma.diseaseReport.findUnique({
+            where: { id: reportId },
+            select: {
+              id: true,
+              diseaseType: true,
+              district: true,
+              caseCount: true,
+            },
+          });
+
+          if (classification === "ANOMALY" && reportRow) {
+            const advisoryDraft = await this.createAiSuggestedAdvisoryDraft({
+              reportId: reportRow.id,
+              diseaseType: reportRow.diseaseType,
+              district: reportRow.district,
+              currentCases: reportRow.caseCount,
+              historicalMean: payload.historical_mean,
+              zScore,
             });
+            advisoryDraftId = advisoryDraft?.id;
 
-            if (report) {
-              const advisoryDraft = await this.createAiSuggestedAdvisoryDraft({
-                reportId: report.id,
-                diseaseType: report.diseaseType,
-                district: report.district,
-                currentCases: report.caseCount,
-                historicalMean: payload.historical_mean,
-                zScore,
-              });
+            alertId = await this.createAdminReviewAlertAndNotify({
+              reportId: reportRow.id,
+              diseaseType: reportRow.diseaseType,
+              district: reportRow.district,
+              currentCases: reportRow.caseCount,
+              historicalMean: payload.historical_mean,
+              zScore,
+              advisoryDraftId,
+            });
+          }
 
-              await this.createAdminReviewAlertAndNotify({
-                reportId: report.id,
-                diseaseType: report.diseaseType,
-                district: report.district,
-                currentCases: report.caseCount,
-                historicalMean: payload.historical_mean,
-                zScore,
-                advisoryDraftId: advisoryDraft?.id,
-              });
-            }
+          if (reportRow) {
+            await this.persistAnomalySignal({
+              reportId,
+              district: {
+                district: reportRow.district,
+                diseaseType: reportRow.diseaseType,
+              },
+              payload,
+              zScore,
+              classification:
+                classification === "ANOMALY" ? "ANOMALY" : "NORMAL",
+              sampleSize,
+              lookbackStart,
+              lookbackEnd,
+              advisoryId: advisoryDraftId,
+              alertId,
+              manual: false,
+            });
           }
 
           Logger.info("AI anomaly trigger sent successfully", {
@@ -521,6 +573,155 @@ export class AIService {
       attempts: env.AI_SERVICE_RETRY_COUNT,
       error: lastErrorMessage,
     });
+  }
+
+  private static async persistAnomalySignal(input: {
+    reportId?: string;
+    district: { district: string; diseaseType: string };
+    payload: ZScorePayload;
+    zScore?: number;
+    classification: "ANOMALY" | "NORMAL";
+    sampleSize: number;
+    lookbackStart: Date;
+    lookbackEnd: Date;
+    advisoryId?: string;
+    alertId?: string;
+    manual: boolean;
+    notes?: string;
+  }): Promise<{ id: string }> {
+    return prisma.anomalySignal.create({
+      data: {
+        reportId: input.reportId,
+        district: input.district.district,
+        diseaseType: input.district.diseaseType,
+        currentCases: input.payload.current_cases,
+        historicalMean: input.payload.historical_mean,
+        stdDev: input.payload.std_dev,
+        zScore: input.zScore,
+        classification: input.classification,
+        method: "ZSCORE",
+        sampleSize: input.sampleSize,
+        lookbackStart: input.lookbackStart,
+        lookbackEnd: input.lookbackEnd,
+        advisoryId: input.advisoryId,
+        alertId: input.alertId,
+        manual: input.manual,
+        notes: input.notes,
+      },
+      select: { id: true },
+    });
+  }
+
+  /**
+   * Ad-hoc Z-score analyzer used by /analytics/anomalies/run.
+   * Pulls historical reports for (district, diseaseType) within lookback window
+   * and calls the Python /detect endpoint. Optionally persists the signal.
+   */
+  static async runAdHocZScore(input: {
+    district: string;
+    diseaseType: string;
+    lookbackDays?: number;
+    persist?: boolean;
+    notes?: string;
+  }): Promise<AdHocZScoreResult> {
+    const lookbackDays = Math.max(1, Math.min(180, input.lookbackDays ?? 7));
+    const lookbackEnd = new Date();
+    const lookbackStart = new Date(lookbackEnd);
+    lookbackStart.setUTCDate(lookbackStart.getUTCDate() - lookbackDays);
+
+    const historicalReports = await prisma.diseaseReport.findMany({
+      where: {
+        district: { equals: input.district, mode: "insensitive" },
+        diseaseType: { equals: input.diseaseType, mode: "insensitive" },
+        timestamp: { gte: lookbackStart, lte: lookbackEnd },
+      },
+      select: { timestamp: true, caseCount: true },
+      orderBy: { timestamp: "asc" },
+    });
+
+    if (historicalReports.length === 0) {
+      throw new Error(
+        `No reports found for ${input.diseaseType} in ${input.district} within the last ${lookbackDays} days`,
+      );
+    }
+
+    const values = historicalReports.map((r) => r.caseCount);
+    const currentCases = values[values.length - 1];
+    const baseline = values.slice(0, -1);
+    const baselineForStats = baseline.length > 0 ? baseline : values;
+    const stats = this.computeStats(baselineForStats);
+
+    const payload: ZScorePayload = {
+      method: "zscore",
+      current_cases: currentCases,
+      historical_mean: Number(stats.meanCases.toFixed(4)),
+      std_dev: Number(stats.stdDevCases.toFixed(4)),
+    };
+
+    let zScore: number | undefined;
+    let classification: "ANOMALY" | "NORMAL" = "NORMAL";
+
+    if (payload.std_dev > 0) {
+      const endpoint = new URL(
+        env.AI_SERVICE_ZSCORE_PATH,
+        env.AI_SERVICE_BASE_URL,
+      ).toString();
+      try {
+        const response = await this.postJson(endpoint, payload);
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          const parsed = this.parseZScoreApiResponse(response.body);
+          if (typeof parsed?.z_score === "number") {
+            zScore = parsed.z_score;
+          }
+          if (
+            String(parsed?.classification ?? "").toUpperCase() === "ANOMALY"
+          ) {
+            classification = "ANOMALY";
+          }
+        } else {
+          // Fallback local calc if Python service unavailable
+          zScore = (currentCases - payload.historical_mean) / payload.std_dev;
+          classification = zScore > 2 ? "ANOMALY" : "NORMAL";
+        }
+      } catch (error) {
+        Logger.warn("Ad-hoc z-score: Python service unavailable, falling back to local", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        zScore = (currentCases - payload.historical_mean) / payload.std_dev;
+        classification = zScore > 2 ? "ANOMALY" : "NORMAL";
+      }
+    }
+
+    let signalId: string | undefined;
+    if (input.persist) {
+      const persisted = await this.persistAnomalySignal({
+        district: { district: input.district, diseaseType: input.diseaseType },
+        payload,
+        zScore,
+        classification,
+        sampleSize: stats.sampleSize,
+        lookbackStart,
+        lookbackEnd,
+        manual: true,
+        notes: input.notes,
+      });
+      signalId = persisted.id;
+    }
+
+    return {
+      district: input.district,
+      diseaseType: input.diseaseType,
+      currentCases,
+      historicalMean: payload.historical_mean,
+      stdDev: payload.std_dev,
+      zScore: typeof zScore === "number" ? Number(zScore.toFixed(4)) : undefined,
+      classification,
+      sampleSize: stats.sampleSize,
+      lookbackStart,
+      lookbackEnd,
+      thresholdSigma: 2,
+      signalId,
+    };
   }
 
   /**

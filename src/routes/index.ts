@@ -10,12 +10,14 @@ import healthRoutes from "./health.route";
 import adminRoutes from "./admin.route";
 import aiRoutes from "./ai.route";
 import analyticsRoutes from "./analytics.route";
+import searchRoutes from "./search.route";
 import swaggerRoutes from "./swagger/swagger.config";
 
 const router = Router();
 
 router.use("/docs", swaggerRoutes);
 router.use("/auth", authRoutes);
+router.use("/search", searchRoutes);
 router.use("/users", userRoutes);
 router.use("/reports", reportRoutes);
 router.use("/alerts", alertRoutes);

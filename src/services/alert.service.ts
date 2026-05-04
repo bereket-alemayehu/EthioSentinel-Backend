@@ -153,7 +153,7 @@ export class AlertService {
     return alerts.map((alert) => this.toAlertManagementView(alert));
   }
 
-  static async approveAlert(alertId: string) {
+  static async approveAlert(alertId: string, approverUserId: string) {
     if (!alertId) {
       throw new AppError("Invalid alert id", 400);
     }
@@ -170,24 +170,31 @@ export class AlertService {
       throw new AppError("Alert not found", 404);
     }
 
-    // BR-02: block broadcast if the linked advisory is not yet APPROVED
-    if (
-      existingAlert.advisory &&
-      existingAlert.advisory.status !== AdvisoryStatus.APPROVED
-    ) {
-      throw new AppError(
-        "Cannot approve alert: linked advisory must be APPROVED before broadcast",
-        422,
-      );
-    }
+    const updatedAlert = await prisma.$transaction(async (tx) => {
+      // Cascade: approving broadcast also publishes the linked advisory (admin one-step workflow).
+      if (
+        existingAlert.advisoryId &&
+        existingAlert.advisory &&
+        existingAlert.advisory.status !== AdvisoryStatus.APPROVED
+      ) {
+        await tx.advisory.update({
+          where: { id: existingAlert.advisoryId },
+          data: {
+            status: AdvisoryStatus.APPROVED,
+            approvedById: approverUserId,
+            approvedAt: new Date(),
+          },
+        });
+      }
 
-    const updatedAlert = await prisma.alert.update({
-      where: { id: alertId },
-      data: { isDelivered: true },
-      include: {
-        disease: true,
-        advisory: true,
-      },
+      return tx.alert.update({
+        where: { id: alertId },
+        data: { isDelivered: true },
+        include: {
+          disease: true,
+          advisory: true,
+        },
+      });
     });
 
     const managementView = this.toAlertManagementView(updatedAlert);
@@ -303,6 +310,70 @@ export class AlertService {
     });
 
     return this.toAlertManagementView(alert);
+  }
+
+  /**
+   * Notification feed for the navbar bell.
+   * - ADMIN / RESEARCHER see the most recent alerts globally.
+   * - HEW / CITIZEN see alerts whose targetZone matches their region or
+   *   assignedDistrict (case-insensitive).
+   */
+  static async getNotificationsForUserId(userId: string, limit?: number) {
+    const cap = Math.max(1, Math.min(50, limit ?? 10));
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true, region: true, assignedDistrict: true },
+    });
+
+    if (!user) {
+      throw new AppError("User not found", 404);
+    }
+
+    const role = String(user.role).toUpperCase();
+    const isPrivileged = role === "ADMIN" || role === "RESEARCHER";
+
+    const orFilters: Array<{
+      targetZone: { equals: string; mode: "insensitive" };
+    }> = [];
+    if (user.region) {
+      orFilters.push({
+        targetZone: { equals: user.region, mode: "insensitive" },
+      });
+    }
+    if (user.assignedDistrict) {
+      orFilters.push({
+        targetZone: {
+          equals: user.assignedDistrict,
+          mode: "insensitive",
+        },
+      });
+    }
+
+    const where = isPrivileged
+      ? undefined
+      : orFilters.length > 0
+        ? { OR: orFilters }
+        : { id: "__none__" };
+
+    const alerts = await prisma.alert.findMany({
+      where,
+      include: { disease: { select: { name: true } } },
+      orderBy: { createdAt: "desc" },
+      take: cap,
+    });
+
+    return alerts.map((a) => ({
+      id: a.id,
+      title: a.title,
+      message: a.message,
+      severity: a.severity,
+      targetZone: a.targetZone,
+      disease: a.disease?.name ?? null,
+      isDelivered: a.isDelivered,
+      aiSuggested: a.aiSuggested,
+      createdAt: a.createdAt,
+    }));
   }
 
   /**

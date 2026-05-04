@@ -29,4 +29,38 @@ router.get(
   AnalyticsController.getGeoStats,
 );
 
+/**
+ * GET /analytics/anomalies
+ * Lists persisted AnomalySignal rows. Supports `export=csv`.
+ */
+router.get(
+  "/anomalies",
+  authenticate,
+  authorize(Role.ADMIN, Role.RESEARCHER),
+  AnalyticsController.getAnomalies,
+);
+
+/**
+ * GET /analytics/anomalies/timeseries?district=&diseaseType=&days=
+ * Daily case counts for a district+disease window with mean / sigma bands.
+ */
+router.get(
+  "/anomalies/timeseries",
+  authenticate,
+  authorize(Role.ADMIN, Role.RESEARCHER),
+  AnalyticsController.getAnomalyTimeseries,
+);
+
+/**
+ * POST /analytics/anomalies/run
+ * Body: { district, diseaseType, lookbackDays?, persist?, notes? }
+ * Runs the Python /detect z-score endpoint ad-hoc on stored reports.
+ */
+router.post(
+  "/anomalies/run",
+  authenticate,
+  authorize(Role.ADMIN, Role.RESEARCHER),
+  AnalyticsController.runAnomaly,
+);
+
 export default router;
