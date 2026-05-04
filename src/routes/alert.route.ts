@@ -7,6 +7,12 @@ import { Role } from "@prisma/client";
 const router = Router();
 
 router.get(
+  "/notifications",
+  authenticate,
+  AlertController.getNotifications,
+);
+
+router.get(
   "/",
   authenticate,
   authorize(Role.ADMIN, Role.RESEARCHER),

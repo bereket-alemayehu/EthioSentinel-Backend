@@ -21,7 +21,7 @@ export class AlertController {
 
   static approveAlert = catchAsync(async (req: Request, res: Response) => {
     const alertId = String(req.params.id);
-    const alert = await AlertService.approveAlert(alertId);
+    const alert = await AlertService.approveAlert(alertId, req.user!.id);
     return sendSuccess(res, alert, "Alert approved successfully");
   });
 
@@ -39,4 +39,19 @@ export class AlertController {
     const alert = await AlertService.createAlert(alertData);
     return sendSuccess(res, alert, "Alert created successfully", 201);
   });
+
+  static getNotifications = catchAsync(
+    async (req: Request, res: Response) => {
+      const limit = req.query.limit ? Number(req.query.limit) : undefined;
+      const notifications = await AlertService.getNotificationsForUserId(
+        req.user!.id,
+        limit,
+      );
+      return sendSuccess(
+        res,
+        notifications,
+        "Notifications retrieved successfully",
+      );
+    },
+  );
 }

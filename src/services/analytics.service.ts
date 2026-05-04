@@ -11,6 +11,22 @@ type AnalyticsFilters = {
   limit?: number;
 };
 
+type AnomalyFilters = {
+  startDate?: string;
+  endDate?: string;
+  district?: string;
+  diseaseType?: string;
+  classification?: "ANOMALY" | "NORMAL";
+  page?: number;
+  limit?: number;
+};
+
+type TimeseriesFilters = {
+  district: string;
+  diseaseType: string;
+  days?: number;
+};
+
 type AggregatedRow = {
   district: string;
   diseaseType: string;
@@ -217,6 +233,225 @@ export class AnalyticsService {
 
     const buffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(buffer);
+  }
+
+  static async exportAggregatedCsv(result: AnalyticsResult): Promise<Buffer> {
+    const headers = [
+      "District",
+      "Disease Type",
+      "Total Cases",
+      "Total Deaths",
+      "Report Count",
+      "Mortality Rate",
+    ];
+    const escapeCell = (value: string | number) => {
+      const str = String(value ?? "");
+      if (/[",\n]/.test(str)) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+    const lines: string[] = [headers.join(",")];
+    for (const row of result.data) {
+      lines.push(
+        [
+          row.district,
+          row.diseaseType,
+          row.totalCases,
+          row.totalDeaths,
+          row.reportCount,
+          row.mortalityRate,
+        ]
+          .map(escapeCell)
+          .join(","),
+      );
+    }
+    return Buffer.from(lines.join("\n") + "\n", "utf8");
+  }
+
+  static async getAnomalySignals(filters: AnomalyFilters) {
+    const page = Math.max(1, filters.page ?? 1);
+    const limit = Math.min(200, Math.max(1, filters.limit ?? 50));
+    const skip = (page - 1) * limit;
+
+    const dateFilter = this.buildDateFilter(filters.startDate, filters.endDate);
+
+    const where = {
+      ...(dateFilter ? { createdAt: dateFilter } : {}),
+      ...(filters.district
+        ? { district: { contains: filters.district, mode: "insensitive" as const } }
+        : {}),
+      ...(filters.diseaseType
+        ? {
+            diseaseType: {
+              contains: filters.diseaseType,
+              mode: "insensitive" as const,
+            },
+          }
+        : {}),
+      ...(filters.classification
+        ? { classification: filters.classification }
+        : {}),
+    };
+
+    const [rows, total] = await Promise.all([
+      prisma.anomalySignal.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.anomalySignal.count({ where }),
+    ]);
+
+    return {
+      data: rows,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    };
+  }
+
+  static async exportAnomaliesCsv(rows: Array<{
+    createdAt: Date;
+    district: string;
+    diseaseType: string;
+    currentCases: number;
+    historicalMean: number;
+    stdDev: number;
+    zScore: number | null;
+    classification: string;
+    method: string;
+    sampleSize: number;
+    manual: boolean;
+  }>): Promise<Buffer> {
+    const headers = [
+      "Detected At",
+      "District",
+      "Disease Type",
+      "Current Cases",
+      "Historical Mean",
+      "Std Dev",
+      "Z-Score",
+      "Classification",
+      "Method",
+      "Sample Size",
+      "Manual",
+    ];
+    const escapeCell = (value: string | number | null | undefined) => {
+      const str = String(value ?? "");
+      if (/[",\n]/.test(str)) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+    const lines: string[] = [headers.join(",")];
+    for (const row of rows) {
+      lines.push(
+        [
+          row.createdAt.toISOString(),
+          row.district,
+          row.diseaseType,
+          row.currentCases,
+          row.historicalMean,
+          row.stdDev,
+          row.zScore ?? "",
+          row.classification,
+          row.method,
+          row.sampleSize,
+          row.manual ? "yes" : "no",
+        ]
+          .map(escapeCell)
+          .join(","),
+      );
+    }
+    return Buffer.from(lines.join("\n") + "\n", "utf8");
+  }
+
+  static async getAnomalyTimeseries(filters: TimeseriesFilters) {
+    const days = Math.max(1, Math.min(180, filters.days ?? 30));
+    const lookbackEnd = new Date();
+    const lookbackStart = new Date(lookbackEnd);
+    lookbackStart.setUTCDate(lookbackStart.getUTCDate() - days);
+
+    const reports = await prisma.diseaseReport.findMany({
+      where: {
+        district: { equals: filters.district, mode: "insensitive" },
+        diseaseType: { equals: filters.diseaseType, mode: "insensitive" },
+        timestamp: { gte: lookbackStart, lte: lookbackEnd },
+      },
+      select: { timestamp: true, caseCount: true, deathCount: true },
+      orderBy: { timestamp: "asc" },
+    });
+
+    // Bucket by day (UTC)
+    const dailyMap = new Map<
+      string,
+      { date: string; cases: number; deaths: number; reports: number }
+    >();
+    for (const r of reports) {
+      const dayKey = r.timestamp.toISOString().slice(0, 10);
+      if (!dailyMap.has(dayKey)) {
+        dailyMap.set(dayKey, { date: dayKey, cases: 0, deaths: 0, reports: 0 });
+      }
+      const bucket = dailyMap.get(dayKey)!;
+      bucket.cases += r.caseCount;
+      bucket.deaths += r.deathCount;
+      bucket.reports += 1;
+    }
+
+    const dailySeries = Array.from(dailyMap.values()).sort((a, b) =>
+      a.date.localeCompare(b.date),
+    );
+
+    // Compute mean/stdDev across all daily buckets
+    const values = dailySeries.map((d) => d.cases);
+    let mean = 0;
+    let stdDev = 0;
+    if (values.length > 0) {
+      mean = values.reduce((s, v) => s + v, 0) / values.length;
+      const variance =
+        values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length;
+      stdDev = Math.sqrt(variance);
+    }
+
+    const series = dailySeries.map((d) => ({
+      ...d,
+      zScore: stdDev > 0 ? Number(((d.cases - mean) / stdDev).toFixed(4)) : 0,
+      isAnomaly: stdDev > 0 && (d.cases - mean) / stdDev > 2,
+    }));
+
+    // Recent persisted signals for this combo
+    const signals = await prisma.anomalySignal.findMany({
+      where: {
+        district: { equals: filters.district, mode: "insensitive" },
+        diseaseType: { equals: filters.diseaseType, mode: "insensitive" },
+        createdAt: { gte: lookbackStart, lte: lookbackEnd },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+
+    return {
+      district: filters.district,
+      diseaseType: filters.diseaseType,
+      windowDays: days,
+      lookbackStart: lookbackStart.toISOString(),
+      lookbackEnd: lookbackEnd.toISOString(),
+      summary: {
+        mean: Number(mean.toFixed(4)),
+        stdDev: Number(stdDev.toFixed(4)),
+        threshold2Sigma: Number((mean + 2 * stdDev).toFixed(4)),
+        threshold3Sigma: Number((mean + 3 * stdDev).toFixed(4)),
+        sampleSize: values.length,
+        latestZScore: series.length > 0 ? series[series.length - 1].zScore : 0,
+      },
+      series,
+      signals,
+    };
   }
 
   static async getGeoAggregatedReports(filters: {

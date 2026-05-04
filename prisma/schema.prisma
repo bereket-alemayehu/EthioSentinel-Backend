@@ -64,6 +64,16 @@ enum ChatRole {
   ASSISTANT
 }
 
+enum AnomalyMethod {
+  ZSCORE
+  ARIMA
+}
+
+enum AnomalyClassification {
+  NORMAL
+  ANOMALY
+}
+
 model Region {
   id              Int        @id @default(autoincrement())
   name            String     @unique
@@ -167,12 +177,39 @@ model DiseaseReport {
   disease             Disease?       @relation(fields: [diseaseId], references: [id], onDelete: SetNull)
   reporter            User           @relation("ReportSubmittedBy", fields: [reporterId], references: [id], onDelete: Cascade)
   advisories          Advisory[]
+  anomalySignals      AnomalySignal[]
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
 
   @@index([district, timestamp])
   @@index([diseaseType, timestamp])
   @@index([status])
+}
+
+model AnomalySignal {
+  id              String                @id @default(uuid())
+  reportId        String?
+  district        String
+  diseaseType     String
+  currentCases    Float
+  historicalMean  Float
+  stdDev          Float
+  zScore          Float?
+  classification  AnomalyClassification @default(NORMAL)
+  method          AnomalyMethod         @default(ZSCORE)
+  sampleSize      Int                   @default(0)
+  lookbackStart   DateTime?
+  lookbackEnd     DateTime?
+  advisoryId      String?
+  alertId         String?
+  manual          Boolean               @default(false)
+  notes           String?
+  report          DiseaseReport?        @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  createdAt       DateTime              @default(now())
+
+  @@index([district, diseaseType, createdAt])
+  @@index([classification])
+  @@index([reportId])
 }
 
 model Advisory {

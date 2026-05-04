@@ -20,7 +20,7 @@ const SYSTEM_PROMPT = `You are ${env.CHAT_BOT_NAME} for Ethiopia public health u
 - Give concise, practical, safe health guidance.
 - You are not a doctor; always include a short medical disclaimer.
 - Use prior chat history to personalize replies for this user.
-- Use regional disease context when relevant.
+- The JSON blocks in the prompt are live summaries from the EthioSentinel database for this user's area ONLY. When the user asks about local spikes, trends, or what is happening nearby, summarize those facts clearly (diseases, rough counts, anomalies with z-scores if present). Never invent case numbers or alerts not present in the JSON.
 - If severe symptoms are reported, advise urgent facility visit.
 - Never invent numbers that are not in provided context.`;
 
@@ -62,6 +62,41 @@ export class ChatService {
     return String(language ?? "ENGLISH").toUpperCase() === "AMHARIC" ? "AMHARIC" : "ENGLISH";
   }
 
+  private static districtWhereClause(districtNames: string[]) {
+    if (districtNames.length === 0) {
+      return undefined;
+    }
+    if (districtNames.length === 1) {
+      return {
+        equals: districtNames[0],
+        mode: "insensitive" as const,
+      };
+    }
+    return { in: districtNames };
+  }
+
+  /** Resolves which district names to use for report/anomaly queries (assigned district, or all districts in user's region). */
+  private static async resolveUserAreaDistrictNames(user: {
+    region: string;
+    assignedDistrict: string | null;
+  }): Promise<{ districtNames: string[]; scope: "DISTRICT" | "REGION" | "UNKNOWN" }> {
+    const assigned = user.assignedDistrict?.trim();
+    if (assigned) {
+      return { districtNames: [assigned], scope: "DISTRICT" };
+    }
+
+    const regionRow = await prisma.region.findFirst({
+      where: { name: { equals: user.region.trim(), mode: "insensitive" } },
+      select: { districts: { select: { name: true } } },
+    });
+
+    const names = regionRow?.districts.map((d) => d.name) ?? [];
+    if (names.length === 0) {
+      return { districtNames: [], scope: "UNKNOWN" };
+    }
+    return { districtNames: names, scope: "REGION" };
+  }
+
   private static async getUserDiseaseContext(userId: string) {
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -78,18 +113,43 @@ export class ChatService {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const district = user.assignedDistrict ?? undefined;
+    const { districtNames, scope } = await this.resolveUserAreaDistrictNames(user);
+    const districtFilter = this.districtWhereClause(districtNames);
+
+    const reportWhere = {
+      timestamp: { gte: thirtyDaysAgo },
+      ...(districtFilter ? { district: districtFilter } : {}),
+    };
 
     const diseaseReports = await prisma.diseaseReport.groupBy({
       by: ["diseaseType"],
-      where: {
-        ...(district ? { district } : {}),
-        timestamp: { gte: thirtyDaysAgo },
-      },
+      where: reportWhere,
       _sum: { caseCount: true, deathCount: true },
       _count: { _all: true },
       orderBy: { _count: { diseaseType: "desc" } },
-      take: 5,
+      take: 8,
+    });
+
+    const anomalyWhere = {
+      createdAt: { gte: thirtyDaysAgo },
+      classification: "ANOMALY" as const,
+      ...(districtFilter ? { district: districtFilter } : {}),
+    };
+
+    const recentAnomalies = await prisma.anomalySignal.findMany({
+      where: anomalyWhere,
+      orderBy: { createdAt: "desc" },
+      take: 12,
+      select: {
+        district: true,
+        diseaseType: true,
+        zScore: true,
+        currentCases: true,
+        historicalMean: true,
+        stdDev: true,
+        classification: true,
+        createdAt: true,
+      },
     });
 
     const advisories = await prisma.advisory.findMany({
@@ -114,12 +174,15 @@ export class ChatService {
     return {
       userRegion: user.region,
       userDistrict: user.assignedDistrict,
+      areaScope: scope,
+      districtsInScope: districtNames,
       topDiseases: diseaseReports.map((item) => ({
         diseaseType: item.diseaseType,
         totalCases: item._sum.caseCount ?? 0,
         totalDeaths: item._sum.deathCount ?? 0,
         reports: item._count._all,
       })),
+      recentAnomalies,
       advisories,
     };
   }
@@ -227,15 +290,17 @@ export class ChatService {
     const diseaseContext = await this.getUserDiseaseContext(input.userId);
     const languageInstruction =
       language === "AMHARIC"
-        ? "Respond only in Amharic."
+        ? `Respond only in Amharic (አማርኛ). Write full sentences using Ethiopic Unicode script (e.g. ሰላም) — do not use Latin letters for Amharic words. If you include disease names that are commonly used in English, you may keep them in Latin. Never answer in English when the user wrote in Amharic.`
         : "Respond only in English.";
 
     const prompt = [
       SYSTEM_PROMPT,
       languageInstruction,
       "",
-      `User location context: region=${diseaseContext.userRegion}, district=${diseaseContext.userDistrict ?? "N/A"}`,
-      `Recent disease status summary: ${JSON.stringify(diseaseContext.topDiseases)}`,
+      `User location context: region=${diseaseContext.userRegion}, district=${diseaseContext.userDistrict ?? "N/A"}, coverage=${diseaseContext.areaScope}`,
+      `Districts included in summaries: ${JSON.stringify(diseaseContext.districtsInScope)}`,
+      `Recent disease report totals (last ~30 days by diseaseType): ${JSON.stringify(diseaseContext.topDiseases)}`,
+      `Statistical anomaly signals in this area (from z-score engine, last ~30 days): ${JSON.stringify(diseaseContext.recentAnomalies)}`,
       `Recent approved advisories: ${JSON.stringify(diseaseContext.advisories)}`,
       "",
       "Conversation history:",

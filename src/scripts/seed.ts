@@ -1,4 +1,9 @@
-import { Language, Role } from "@prisma/client";
+import {
+  AnomalyClassification,
+  AnomalyMethod,
+  Language,
+  Role,
+} from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import bcrypt from "bcryptjs";
 import { seedDiseases } from "./seed-diseases";
@@ -492,6 +497,65 @@ async function seedAlerts() {
   console.log("Seeding alerts and advisories complete.");
 }
 
+/** Recent reports + anomaly rows so Admin → Anomaly Analysis chart/table/map have data. */
+async function seedAnomalyDemoData() {
+  const hew = await prisma.user.findFirst({ where: { role: Role.HEW } });
+  if (!hew) {
+    console.log("⚠️ Skipping anomaly demo: no HEW user.");
+    return;
+  }
+
+  const targets: Array<{ district: string; diseaseType: string }> = [
+    { district: "Bole", diseaseType: "Malaria" },
+    { district: "Arada", diseaseType: "Cholera" },
+    { district: "Yeka", diseaseType: "Dengue" },
+  ];
+
+  const now = new Date();
+  const lookbackStart = new Date(now);
+  lookbackStart.setUTCDate(lookbackStart.getUTCDate() - 40);
+
+  for (const t of targets) {
+    for (let day = 0; day < 28; day++) {
+      const ts = new Date(now);
+      ts.setUTCDate(ts.getUTCDate() - day);
+      ts.setUTCHours(12, 0, 0, 0);
+      const base = 18 + (day % 9) * 3;
+      await prisma.diseaseReport.create({
+        data: {
+          district: t.district,
+          diseaseType: t.diseaseType,
+          reporterId: hew.id,
+          caseCount: day === 4 ? base + 95 : base,
+          deathCount: 0,
+          status: "VERIFIED",
+          timestamp: ts,
+          notes: `Demo seed — ${t.district} / ${t.diseaseType}`,
+        },
+      });
+    }
+
+    await prisma.anomalySignal.create({
+      data: {
+        district: t.district,
+        diseaseType: t.diseaseType,
+        currentCases: 130,
+        historicalMean: 48,
+        stdDev: 11,
+        zScore: 3.45,
+        classification: AnomalyClassification.ANOMALY,
+        method: AnomalyMethod.ZSCORE,
+        sampleSize: 28,
+        lookbackStart,
+        lookbackEnd: now,
+        manual: false,
+      },
+    });
+  }
+
+  console.log("✅ Seeded anomaly demo data (time-series reports + ANOMALY signals)");
+}
+
 async function main() {
   await seedDiseases();
   console.log("✅ Seeded master diseases list");
@@ -507,6 +571,8 @@ async function main() {
 
   await seedAlerts();
   console.log("✅ Seeded sample alerts for approval");
+
+  await seedAnomalyDemoData();
 }
 
 main()
