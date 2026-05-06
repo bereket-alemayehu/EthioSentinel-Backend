@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
 import { AIService } from "../services/ai.service";
-import { Language, Role } from "../../generated/prisma/enums";
+import { Language, Role } from "@prisma/client";
 
 function daysAgoUtc(days: number) {
   const date = new Date();
