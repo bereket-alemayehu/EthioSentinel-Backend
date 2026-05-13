@@ -11,6 +11,9 @@ type OfflineReportItem = {
   diseaseType?: unknown;
   caseCount?: unknown;
   deathCount?: unknown;
+  date?: unknown;
+  reportDate?: unknown;
+  timestamp?: unknown;
   notes?: unknown;
   isOfflineCached?: unknown;
 };
@@ -50,6 +53,7 @@ export class ReportSyncService {
       diseaseId: number | undefined;
       caseCount: number;
       deathCount: number;
+      timestamp: Date | undefined;
       notes: string | undefined;
       isOfflineCached: boolean;
     };
@@ -95,6 +99,7 @@ export class ReportSyncService {
             isOfflineCached: true,
             status: ReportStatus.PENDING,
             isMortalityPriority: item.deathCount > 0,
+            timestamp: item.timestamp,
             notes: item.notes,
           },
           select: { id: true, diseaseType: true, district: true },

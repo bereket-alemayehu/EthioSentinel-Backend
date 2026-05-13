@@ -11,6 +11,7 @@ import adminRoutes from "./admin.route";
 import aiRoutes from "./ai.route";
 import analyticsRoutes from "./analytics.route";
 import searchRoutes from "./search.route";
+import publicHealthRoutes from "./public-health.route";
 import swaggerRoutes from "./swagger/swagger.config";
 
 const router = Router();
@@ -28,5 +29,6 @@ router.use("/health", healthRoutes);
 router.use("/admin", adminRoutes);
 router.use("/ai", aiRoutes);
 router.use("/analytics", analyticsRoutes);
+router.use("/public-health", publicHealthRoutes);
 
 export default router;
