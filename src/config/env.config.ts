@@ -40,4 +40,7 @@ export const env = cleanEnv(process.env, {
   AI_INTERNAL_TOKEN: str({ default: "" }),
   GEMINI_API_KEY: str({ default: "" }),
   CHAT_BOT_NAME: str({ default: "EthioSentinel Assistant" }),
+  TWILIO_ACCOUNT_SID: str({ default: "" }),
+  TWILIO_AUTH_TOKEN: str({ default: "" }),
+  TWILIO_MESSAGING_SERVICE_SID: str({ default: "" }),
 });
