@@ -15,28 +15,28 @@ router.get(
 router.get(
   "/",
   authenticate,
-  authorize(Role.ADMIN, Role.RESEARCHER),
+  authorize(Role.ADMIN, Role.RESEARCHER, Role.SUPER_ADMIN),
   AlertController.getAllAlerts,
 );
 
 router.put(
   "/:id/approve",
   authenticate,
-  authorize(Role.ADMIN),
+  authorize(Role.ADMIN, Role.SUPER_ADMIN),
   AlertController.approveAlert,
 );
 
 router.put(
   "/:id/reject",
   authenticate,
-  authorize(Role.ADMIN),
+  authorize(Role.ADMIN, Role.SUPER_ADMIN),
   AlertController.rejectAlert,
 );
 
 router.post(
   "/",
   authenticate,
-  authorize(Role.ADMIN),
+  authorize(Role.ADMIN, Role.SUPER_ADMIN),
   AlertController.createAlert,
 );
 

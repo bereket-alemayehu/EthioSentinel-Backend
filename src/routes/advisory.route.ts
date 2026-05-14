@@ -16,7 +16,7 @@ router.post("/symptom-check", AdvisoryController.symptomCheck);
 router.post(
   "/generate",
   authenticate,
-  authorize(Role.ADMIN, Role.HEW),
+  authorize(Role.ADMIN, Role.HEW, Role.SUPER_ADMIN),
   AdvisoryController.generateAdvisoryText,
 );
 
@@ -25,42 +25,42 @@ router.get("/", AdvisoryController.getAllAdvisories);
 router.get(
   "/drafts",
   authenticate,
-  authorize(Role.ADMIN),
+  authorize(Role.ADMIN, Role.SUPER_ADMIN),
   AdvisoryController.getDraftAdvisories,
 );
 
 router.get(
   "/approved-list",
   authenticate,
-  authorize(Role.ADMIN),
+  authorize(Role.ADMIN, Role.SUPER_ADMIN),
   AdvisoryController.getApprovedAdvisories,
 );
 
 router.post(
   "/",
   authenticate,
-  authorize(Role.ADMIN),
+  authorize(Role.ADMIN, Role.SUPER_ADMIN),
   AdvisoryController.createAdvisory,
 );
 
 router.patch(
   "/:id/approve",
   authenticate,
-  authorize(Role.ADMIN),
+  authorize(Role.ADMIN, Role.SUPER_ADMIN),
   AdvisoryController.approveAdvisory,
 );
 
 router.patch(
   "/:id/reject",
   authenticate,
-  authorize(Role.ADMIN),
+  authorize(Role.ADMIN, Role.SUPER_ADMIN),
   AdvisoryController.rejectAdvisory,
 );
 
 router.patch(
   "/:id/withdraw",
   authenticate,
-  authorize(Role.ADMIN),
+  authorize(Role.ADMIN, Role.SUPER_ADMIN),
   AdvisoryController.withdrawAdvisory,
 );
 

@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from "express";
+import { Request, Response } from "express";
 import { AuthService } from "../services/auth.service";
 import { catchAsync } from "../utils/catchAsync";
 import { sendSuccess } from "../utils/response.util";
@@ -58,7 +58,7 @@ export class AuthController {
 
   static login = catchAsync(async (req: Request, res: Response) => {
     const { email, password, recaptchaToken } = req.body;
-    
+
     if (!recaptchaToken) {
       throw new AppError("reCAPTCHA token is missing", 400);
     }
@@ -67,7 +67,15 @@ export class AuthController {
       throw new AppError("reCAPTCHA verification failed. Please try again.", 400);
     }
 
-    const { accessToken, user } = await AuthService.login(email, password);
+    const xf = req.headers["x-forwarded-for"];
+    const ip =
+      (typeof xf === "string" ? xf.split(",")[0]?.trim() : undefined) ||
+      req.socket.remoteAddress ||
+      null;
+    const { accessToken, user } = await AuthService.login(email, password, {
+      ipAddress: ip,
+      userAgent: req.get("user-agent"),
+    });
 
     const cookieOpts = {
       httpOnly: true as const,
@@ -96,6 +104,32 @@ export class AuthController {
     const userId = req.user!.id;
     const user = await AuthService.getMe(userId);
     return sendSuccess(res, { user }, "User profile retrieved");
+  });
+
+  static changePassword = catchAsync(async (req: Request, res: Response) => {
+    const userId = req.user!.id;
+    const { currentPassword, newPassword } = req.body as {
+      currentPassword?: string;
+      newPassword?: string;
+    };
+    const xf = req.headers["x-forwarded-for"];
+    const ip =
+      (typeof xf === "string" ? xf.split(",")[0]?.trim() : undefined) ||
+      req.socket.remoteAddress ||
+      null;
+    await AuthService.changeOwnPassword(
+      userId,
+      String(currentPassword ?? ""),
+      String(newPassword ?? ""),
+      { ipAddress: ip, userAgent: req.get("user-agent") },
+    );
+    res.clearCookie("accessToken", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      path: "/",
+    });
+    return sendSuccess(res, null, "Password updated. Please sign in again.");
   });
 
   static updateMeGeolocation = catchAsync(async (req: Request, res: Response) => {

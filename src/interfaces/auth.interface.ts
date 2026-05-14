@@ -5,6 +5,8 @@ export interface ITokenPayload {
   role: Role;
   email: string | null;
   phoneNumber?: string | null;
+  /** Missing in legacy tokens; treated as 0. */
+  tokenVersion?: number;
   iat?: number;
   exp?: number;
 }

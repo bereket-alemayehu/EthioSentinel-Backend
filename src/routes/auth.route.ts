@@ -17,6 +17,7 @@ router.post("/reset-password", AuthController.resetPassword);
 router.post("/login", loginRateLimiter, AuthController.login);
 router.post("/logout", AuthController.logout);
 router.get("/me", authenticate, AuthController.getMe);
+router.patch("/me/password", authenticate, AuthController.changePassword);
 router.patch("/me/geolocation", authenticate, AuthController.updateMeGeolocation);
 
 export default router;

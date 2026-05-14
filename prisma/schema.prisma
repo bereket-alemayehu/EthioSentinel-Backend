@@ -11,6 +11,7 @@ enum Role {
   HEW
   ADMIN
   RESEARCHER
+  SUPER_ADMIN
 }
 
 enum Language {
@@ -114,14 +115,34 @@ model User {
   clearanceLevel   Int?
   otpCode          String?
   otpExpiresAt     DateTime?
+  tokenVersion     Int             @default(0)
   submittedReports   DiseaseReport[] @relation("ReportSubmittedBy")
   approvedAdvisories Advisory[]      @relation("AdvisoryApprovedBy")
   createdAlerts      Alert[]         @relation("AlertCreatedBy")
   chatConversations  ChatConversation[]
+  auditLogs          AuditLog[]      @relation("AuditActor")
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 
   @@index([role])
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  createdAt    DateTime @default(now())
+  actorUserId  String?
+  actorEmail   String?
+  action       String
+  resourceType String?
+  resourceId   String?
+  metadata     Json?
+  ipAddress    String?
+  userAgent    String?
+  actor        User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([actorUserId])
+  @@index([action])
 }
 
 model ChatConversation {

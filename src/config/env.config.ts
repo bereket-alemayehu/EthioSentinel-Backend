@@ -15,6 +15,7 @@ export const env = cleanEnv(process.env, {
   JWT_ACCESS_EXPIRES_IN: str({ default: "15m" }),
   JWT_EXPIRES_IN: str({ default: "7d" }),
   SEED_ADMIN_PASSWORD: str({ default: "Admin@12345" }),
+  SEED_SUPER_ADMIN_PASSWORD: str({ default: "SuperAdmin@12345" }),
   BODY_LIMIT: str({ default: "1mb" }),
   SMTP_HOST: str({ default: "" }),
   SMTP_PORT: num({ default: 587 }),

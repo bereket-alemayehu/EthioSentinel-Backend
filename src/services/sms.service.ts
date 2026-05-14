@@ -43,11 +43,19 @@ export class SmsService {
     }
 
     try {
-      const message = await client.messages.create({
-        body,
-        from: env.TWILIO_MESSAGING_SERVICE_SID,
-        to: formattedTo,
-      });
+      const sid = env.TWILIO_MESSAGING_SERVICE_SID?.trim();
+      if (!sid) {
+        Logger.warn("TWILIO_MESSAGING_SERVICE_SID not set; skipping SMS delivery", {
+          to: formattedTo,
+        });
+        return null;
+      }
+      // Messaging Service SIDs start with MG and must use messagingServiceSid, not `from`.
+      const message = await client.messages.create(
+        sid.startsWith("MG")
+          ? { body, to: formattedTo, messagingServiceSid: sid }
+          : { body, to: formattedTo, from: sid },
+      );
       Logger.info("SMS sent successfully", { sid: message.sid, to: formattedTo });
       return message;
     } catch (error) {

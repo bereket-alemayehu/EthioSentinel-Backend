@@ -63,7 +63,10 @@ export class AdvisoryController {
 
   static rejectAdvisory = catchAsync(async (req: Request, res: Response) => {
     const advisoryId = String(req.params.id);
-    const advisory = await AdvisoryService.rejectAdvisory(advisoryId);
+    const advisory = await AdvisoryService.rejectAdvisory(
+      advisoryId,
+      req.user!.id,
+    );
     return sendSuccess(res, advisory, "Advisory rejected");
   });
 
@@ -81,7 +84,10 @@ export class AdvisoryController {
 
   static withdrawAdvisory = catchAsync(async (req: Request, res: Response) => {
     const advisoryId = String(req.params.id);
-    const advisory = await AdvisoryService.withdrawAdvisory(advisoryId);
+    const advisory = await AdvisoryService.withdrawAdvisory(
+      advisoryId,
+      req.user!.id,
+    );
     return sendSuccess(res, advisory, "Advisory withdrawn successfully");
   });
 }

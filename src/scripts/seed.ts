@@ -345,9 +345,12 @@ async function seedRegionsAndDistricts() {
 async function seedUsers() {
   const adminPassword = process.env.SEED_ADMIN_PASSWORD || "Admin@12345";
   const hewPassword = "Hew@12345";
+  const superAdminPassword =
+    process.env.SEED_SUPER_ADMIN_PASSWORD || "SuperAdmin@12345";
 
   const adminHash = await bcrypt.hash(adminPassword, 10);
   const hewHash = await bcrypt.hash(hewPassword, 10);
+  const superAdminHash = await bcrypt.hash(superAdminPassword, 10);
 
   // Seed Admin
   await prisma.user.upsert({
@@ -379,6 +382,25 @@ async function seedUsers() {
       role: Role.HEW,
       region: "Addis Ababa",
       assignedDistrict: "Bole",
+    },
+  });
+
+  // Seed Super Admin (governance: /super-admin UI, audit logs, user admin)
+  await prisma.user.upsert({
+    where: { email: "superadmin@ethiosentinel.org" },
+    update: {
+      passwordHash: superAdminHash,
+      role: Role.SUPER_ADMIN,
+      isActive: true,
+    },
+    create: {
+      username: "super_admin",
+      email: "superadmin@ethiosentinel.org",
+      passwordHash: superAdminHash,
+      role: Role.SUPER_ADMIN,
+      region: "Addis Ababa",
+      clearanceLevel: 10,
+      isActive: true,
     },
   });
 }

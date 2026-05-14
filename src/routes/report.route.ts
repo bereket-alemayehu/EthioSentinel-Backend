@@ -9,21 +9,21 @@ const router = Router();
 router.get(
   "/weekly",
   authenticate,
-  authorize(Role.ADMIN, Role.HEW, Role.RESEARCHER),
+  authorize(Role.ADMIN, Role.HEW, Role.RESEARCHER, Role.SUPER_ADMIN),
   ReportController.getWeeklyReports,
 );
 
 router.get(
   "/",
   authenticate,
-  authorize(Role.ADMIN, Role.HEW, Role.RESEARCHER),
+  authorize(Role.ADMIN, Role.HEW, Role.RESEARCHER, Role.SUPER_ADMIN),
   ReportController.getAllReports,
 );
 
 router.post(
   "/",
   authenticate,
-  authorize(Role.ADMIN, Role.HEW),
+  authorize(Role.ADMIN, Role.HEW, Role.SUPER_ADMIN),
   ReportController.createReport,
 );
 
@@ -31,21 +31,21 @@ router.post(
 router.post(
   "/sync",
   authenticate,
-  authorize(Role.ADMIN, Role.HEW),
+  authorize(Role.ADMIN, Role.HEW, Role.SUPER_ADMIN),
   ReportController.syncOfflineBatch,
 );
 
 router.patch(
   "/:id",
   authenticate,
-  authorize(Role.ADMIN, Role.HEW),
+  authorize(Role.ADMIN, Role.HEW, Role.SUPER_ADMIN),
   ReportController.updateReport,
 );
 
 router.delete(
   "/:id",
   authenticate,
-  authorize(Role.ADMIN, Role.HEW),
+  authorize(Role.ADMIN, Role.HEW, Role.SUPER_ADMIN),
   ReportController.deleteReport,
 );
 

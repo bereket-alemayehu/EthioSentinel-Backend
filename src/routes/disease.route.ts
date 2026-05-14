@@ -8,11 +8,32 @@ const router = Router();
 
 router.get("/", DiseaseController.getAllDiseases);
 
+router.get(
+  "/catalog",
+  authenticate,
+  authorize(Role.ADMIN, Role.SUPER_ADMIN),
+  DiseaseController.getCatalog,
+);
+
 router.post(
   "/",
   authenticate,
-  authorize(Role.ADMIN),
-  DiseaseController.createDisease
+  authorize(Role.ADMIN, Role.SUPER_ADMIN),
+  DiseaseController.createDisease,
+);
+
+router.patch(
+  "/:id",
+  authenticate,
+  authorize(Role.ADMIN, Role.SUPER_ADMIN),
+  DiseaseController.updateDisease,
+);
+
+router.delete(
+  "/:id",
+  authenticate,
+  authorize(Role.ADMIN, Role.SUPER_ADMIN),
+  DiseaseController.deleteDisease,
 );
 
 export default router;
