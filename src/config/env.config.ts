@@ -44,4 +44,5 @@ export const env = cleanEnv(process.env, {
   TWILIO_ACCOUNT_SID: str({ default: "" }),
   TWILIO_AUTH_TOKEN: str({ default: "" }),
   TWILIO_MESSAGING_SERVICE_SID: str({ default: "" }),
+  SITESECRET: str({ desc: "Google reCAPTCHA secret key" }),
 });

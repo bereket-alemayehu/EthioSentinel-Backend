@@ -5,6 +5,7 @@ import { signAccessToken } from "../utils/token.util";
 import { AppError } from "../utils/AppError";
 import { haversineKm } from "../utils/geo.util";
 import { SmsService } from "./sms.service";
+import { EmailSender } from "../utils/EmailSender";
 import { AuditService } from "./audit.service";
 
 export type LoginAuditContext = {
@@ -141,53 +142,92 @@ export class AuthService {
       throw new AppError("Password must be at least 8 characters", 400);
     }
 
-    if (email) {
-      const existingEmail = await prisma.user.findUnique({ where: { email } });
-      if (existingEmail) {
-        throw new AppError("An account with this email already exists", 409);
-      }
-    }
-
-    if (phoneNumber) {
-      const existingPhone = await prisma.user.findUnique({ where: { phoneNumber } });
-      if (existingPhone) {
-        throw new AppError("An account with this phone number already exists", 409);
-      }
-    }
-
-    const passwordHash = await hashPassword(password);
-
-    // Generate 6-digit OTP
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
-
-    const user = await prisma.user.create({
-      data: {
-        email,
-        phoneNumber,
-        username,
-        passwordHash,
-        role: Role.CITIZEN,
-        region,
-        assignedDistrict,
-        isActive: false, // Inactive until OTP verified
-        otpCode,
-        otpExpiresAt,
-      },
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        phoneNumber: true,
-        role: true,
-        region: true,
-        assignedDistrict: true,
+    // ── 1. Check for existing user ──────────────────────────────────────────
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          ...(email ? [{ email }] : []),
+          ...(phoneNumber ? [{ phoneNumber }] : []),
+        ],
       },
     });
 
-    if (phoneNumber) {
-      await SmsService.sendOtp(phoneNumber, otpCode).catch(err => {
-        console.error("SMS failed but user created:", err);
+    const passwordHash = await hashPassword(password);
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
+
+    let user;
+
+    if (existingUser) {
+      // ── 2. If user exists and is already verified, reject ────────────────
+      if (existingUser.isActive) {
+        let field = "identifier";
+        if (email && existingUser.email === email) field = "email";
+        else if (phoneNumber && existingUser.phoneNumber === phoneNumber) field = "phone number";
+        
+        throw new AppError(`An account with this ${field} already exists and is already verified.`, 409);
+      }
+
+      // ── 3. If user exists but NOT verified, update and resend OTP ─────────
+      // This allows users to "retry" registration or update details if they didn't verify.
+      user = await prisma.user.update({
+        where: { id: existingUser.id },
+        data: {
+          username,
+          passwordHash,
+          region,
+          assignedDistrict,
+          otpCode,
+          otpExpiresAt,
+          email,        // Update email/phone in case they changed one of them in the retry
+          phoneNumber,
+        },
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          phoneNumber: true,
+          role: true,
+          region: true,
+          assignedDistrict: true,
+        },
+      });
+      console.info(`[Auth] Existing unverified user ${user.id} updated for re-verification.`);
+    } else {
+      // ── 4. Create new user ────────────────────────────────────────────────
+      user = await prisma.user.create({
+        data: {
+          email,
+          phoneNumber,
+          username,
+          passwordHash,
+          role: Role.CITIZEN,
+          region,
+          assignedDistrict,
+          isActive: false, 
+          otpCode,
+          otpExpiresAt,
+        },
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          phoneNumber: true,
+          role: true,
+          region: true,
+          assignedDistrict: true,
+        },
+      });
+    }
+
+    // ── 5. Delivery Prioritization ──────────────────────────────────────────
+    if (user.email) {
+      await EmailSender.sendOTP(user.email, otpCode).catch(err => {
+        console.error("OTP Email failed:", err);
+      });
+    } else if (user.phoneNumber) {
+      await SmsService.sendOtp(user.phoneNumber, otpCode).catch(err => {
+        console.error("SMS failed:", err);
       });
     }
 
@@ -259,8 +299,8 @@ export class AuthService {
       throw new AppError("Account is already verified", 400);
     }
 
-    if (!user.phoneNumber) {
-      throw new AppError("Cannot resend OTP: No phone number associated with account", 400);
+    if (!user.phoneNumber && !user.email) {
+      throw new AppError("Cannot resend OTP: No contact method (email or phone) associated with account", 400);
     }
 
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
@@ -274,17 +314,28 @@ export class AuthService {
       },
     });
 
-    await SmsService.sendOtp(user.phoneNumber, otpCode).catch((err) => {
-      console.error("SMS resend failed:", err);
-    });
+    if (user.email) {
+      await EmailSender.sendOTP(user.email, otpCode).catch((err) => {
+        console.error("Email resend failed:", err);
+      });
+    } else if (user.phoneNumber) {
+      await SmsService.sendOtp(user.phoneNumber, otpCode).catch((err) => {
+        console.error("SMS resend failed:", err);
+      });
+    }
 
     return { success: true };
   }
 
-  static async forgotPassword(phoneNumber: string) {
-    const cleanPhone = String(phoneNumber).trim();
-    const user = await prisma.user.findUnique({
-      where: { phoneNumber: cleanPhone },
+  static async forgotPassword(identifier: string) {
+    const cleanId = String(identifier).trim();
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { phoneNumber: cleanId },
+          { email: cleanId.toLowerCase() },
+        ],
+      },
     });
 
     if (!user) {
@@ -303,9 +354,15 @@ export class AuthService {
       },
     });
 
-    await SmsService.sendOtp(user.phoneNumber!, otpCode).catch((err) => {
-      console.error("SMS forgot password failed:", err);
-    });
+    if (user.email) {
+      await EmailSender.sendOTP(user.email, otpCode).catch((err) => {
+        console.error("Email forgot password failed:", err);
+      });
+    } else if (user.phoneNumber) {
+      await SmsService.sendOtp(user.phoneNumber, otpCode).catch((err) => {
+        console.error("SMS forgot password failed:", err);
+      });
+    }
 
     return { success: true };
   }
