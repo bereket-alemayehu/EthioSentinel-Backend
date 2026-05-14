@@ -10,11 +10,16 @@ export class SmsSender {
 
   static async sendSms(to: string, body: string) {
     try {
-      const message = await this.client.messages.create({
-        body,
-        from: process.env.TWILIO_MESSAGING_SERVICE_SID,
-        to,
-      });
+      const sid = process.env.TWILIO_MESSAGING_SERVICE_SID?.trim();
+      if (!sid) {
+        Logger.error("TWILIO_MESSAGING_SERVICE_SID is not set");
+        return { success: false, error: new Error("Missing TWILIO_MESSAGING_SERVICE_SID") };
+      }
+      const message = await this.client.messages.create(
+        sid.startsWith("MG")
+          ? { body, to, messagingServiceSid: sid }
+          : { body, to, from: sid },
+      );
       Logger.info("SMS sent successfully", { sid: message.sid, to });
       return { success: true, sid: message.sid };
     } catch (error) {
