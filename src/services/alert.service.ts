@@ -79,7 +79,7 @@ export class AlertService {
       select: { email: true },
     });
 
-    const emails = adminEmails.map((u) => u.email).filter(Boolean);
+    const emails = adminEmails.map((u) => u.email).filter((e): e is string => e !== null);
     emails.push(...EmailSender.parseConfiguredAlertRecipients());
 
     const emailResult = await EmailSender.sendBulkSpikeAlertEmails(emails, {
@@ -156,7 +156,7 @@ export class AlertService {
 
     const emails = recipients
       .map((user) => user.email)
-      .filter((email) => Boolean(email));
+      .filter((email): email is string => email !== null);
 
     const emailResult = await EmailSender.sendBulkAlertApprovalEmails(emails, {
       disease: alert.disease?.name ?? "Unknown disease",

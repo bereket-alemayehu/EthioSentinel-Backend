@@ -18,7 +18,7 @@ export class AuthController {
     }
 
     const user = await AuthService.register(registerData);
-    return sendSuccess(res, { user }, "Account created successfully. Please verify your phone number.", 201);
+    return sendSuccess(res, { user }, "Account created successfully! Please check your email or phone for the verification code.", 201);
   });
 
   static verifyOtp = catchAsync(async (req: Request, res: Response) => {
@@ -35,19 +35,19 @@ export class AuthController {
 
     res.cookie("accessToken", accessToken, cookieOpts);
 
-    return sendSuccess(res, { user }, "Account verified and logged in");
+    return sendSuccess(res, { user }, "Account verified successfully! Welcome to EthioSentinel.");
   });
 
   static resendOtp = catchAsync(async (req: Request, res: Response) => {
     const { userId } = req.body;
     await AuthService.resendVerificationOtp(userId);
-    return sendSuccess(res, null, "A new verification code has been sent");
+    return sendSuccess(res, null, "A new verification code has been sent to your primary contact method.");
   });
 
   static forgotPassword = catchAsync(async (req: Request, res: Response) => {
     const { phoneNumber } = req.body;
     await AuthService.forgotPassword(phoneNumber);
-    return sendSuccess(res, null, "If an account exists, a reset code has been sent");
+    return sendSuccess(res, null, "If an account exists, a recovery code has been sent to your registered email or phone.");
   });
 
   static resetPassword = catchAsync(async (req: Request, res: Response) => {

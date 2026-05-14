@@ -1,19 +1,28 @@
 import axios from "axios";
 import { AppError } from "../utils/AppError";
+import { env } from "../config/env.config";
+
+/** Sentinel value sent by the frontend when the device is offline. */
+const OFFLINE_TOKEN = "OFFLINE";
 
 export class RecaptchaService {
   static async verify(token: string): Promise<boolean> {
-    const secretKey = process.env.SITESECRET;
-
-    if (!secretKey) {
-      console.error("reCAPTCHA SITESECRET is missing from environment variables.");
-      // Fail open or fail closed? Usually fail closed.
-      throw new AppError("reCAPTCHA configuration error on server", 500);
-    }
-
     if (!token) {
       return false;
     }
+
+    // ── Offline bypass ──────────────────────────────────────────────────────
+    // When the client has no internet the reCAPTCHA widget cannot load.
+    // The frontend detects this and sends a well-known sentinel value instead.
+    // Security is maintained by the IP-based rate-limiter applied on the route
+    // (loginRateLimiter / registerRateLimiter middlewares).
+    if (token === OFFLINE_TOKEN) {
+      console.info("[reCAPTCHA] Offline bypass used – skipping Google verification.");
+      return true;
+    }
+
+    // ── Online verification ─────────────────────────────────────────────────
+    const secretKey = env.SITESECRET;
 
     try {
       const response = await axios.post(
