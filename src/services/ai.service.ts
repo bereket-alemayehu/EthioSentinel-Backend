@@ -22,6 +22,14 @@ type ZScorePayload = {
   std_dev: number;
 };
 
+type ArimaPayload = {
+  method: "arima";
+  current_cases: number;
+  historical_series: number[];
+  arima_order: [number, number, number];
+  anomaly_threshold: number;
+};
+
 type ZScoreContext = {
   payload: ZScorePayload;
   sampleSize: number;
@@ -33,6 +41,9 @@ type AdHocZScoreResult = {
   district: string;
   diseaseType: string;
   currentCases: number;
+  currentDeaths: number;
+  mortalityRate: number;
+  mortalitySignal: boolean;
   historicalMean: number;
   stdDev: number;
   zScore?: number;
@@ -44,10 +55,28 @@ type AdHocZScoreResult = {
   signalId?: string;
 };
 
-type ZScoreApiResponse = {
+type AdHocPredictionResult = {
+  district: string;
+  diseaseType: string;
+  currentCases: number;
+  forecastNext: number;
+  residualStd: number;
+  zScore?: number;
+  classification: "ANOMALY" | "NORMAL";
+  sampleSize: number;
+  lookbackStart: Date;
+  lookbackEnd: Date;
+  thresholdSigma: number;
+  arimaOrder: [number, number, number];
+};
+
+type DetectionApiResponse = {
   method?: string;
   z_score?: number;
   classification?: string;
+  forecast_next?: number;
+  residual_std?: number;
+  anomaly_threshold?: number;
 };
 
 type NlpAdvisoryDraftPayload = {
@@ -235,15 +264,15 @@ export class AIService {
     );
   }
 
-  private static parseZScoreApiResponse(
+  private static parseDetectionApiResponse(
     body: string,
-  ): ZScoreApiResponse | null {
+  ): DetectionApiResponse | null {
     try {
       const parsed = JSON.parse(body) as unknown;
       if (!parsed || typeof parsed !== "object") {
         return null;
       }
-      return parsed as ZScoreApiResponse;
+      return parsed as DetectionApiResponse;
     } catch {
       return null;
     }
@@ -402,15 +431,20 @@ export class AIService {
     const emails = admins
       .map((u: { email: string | null }) => u.email)
       .filter(Boolean) as string[];
-    const emailResult = await EmailSender.sendBulkAlertApprovalEmails(emails, {
+    emails.push(...EmailSender.parseConfiguredAlertRecipients());
+    const emailResult = await EmailSender.sendBulkSpikeAlertEmails(emails, {
       disease: input.diseaseType,
       location: input.district,
-      advisory:
+      currentCases: input.currentCases,
+      currentDeaths: 0,
+      expectedCases: input.historicalMean,
+      zScore: input.zScore,
+      severity,
+      summary:
         `${message}` +
         (input.advisoryDraftId
           ? ` Draft advisory id: ${input.advisoryDraftId}`
           : ""),
-      severity,
     });
 
     await prisma.alert.update({
@@ -459,6 +493,110 @@ export class AIService {
     return createdAlert.id;
   }
 
+  private static async createSpikeAlertAndEmailAdmins(input: {
+    diseaseType: string;
+    district: string;
+    currentCases: number;
+    currentDeaths?: number;
+    mortalityRate?: number;
+    expectedCases: number;
+    zScore?: number;
+    source: "AUTOMATED_REPORT" | "MANUAL_ANALYSIS" | "PREDICTION";
+  }): Promise<string | undefined> {
+    const severity =
+      typeof input.currentDeaths === "number" &&
+      input.currentDeaths > 0 &&
+      (input.currentDeaths >= 3 || (input.mortalityRate ?? 0) >= 0.1)
+        ? "CRITICAL"
+        : this.getSeverityFromZScore(input.zScore);
+    const oneDayAgo = new Date();
+    oneDayAgo.setUTCDate(oneDayAgo.getUTCDate() - 1);
+    const title = `Unusual Spike: ${input.diseaseType} in ${input.district}`;
+    const z =
+      typeof input.zScore === "number" ? input.zScore.toFixed(2) : "unknown";
+    const message =
+      `Unusual ${input.diseaseType} increase detected in ${input.district}. ` +
+      `Current cases: ${input.currentCases}; usual recent level: ${input.expectedCases.toFixed(1)}; z-score: ${z}. ` +
+      (typeof input.currentDeaths === "number" && input.currentDeaths > 0
+        ? `Deaths reported: ${input.currentDeaths}; mortality rate: ${((input.mortalityRate ?? 0) * 100).toFixed(1)}%. `
+        : "") +
+      `Source: ${input.source}. Please review in the admin dashboard.`;
+
+    const existingAlert = await prisma.alert.findFirst({
+      where: {
+        aiSuggested: true,
+        targetZone: input.district,
+        title,
+        createdAt: { gte: oneDayAgo },
+      },
+      select: { id: true },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (existingAlert) {
+      Logger.info("Skipping duplicate spike email alert", {
+        alertId: existingAlert.id,
+        diseaseType: input.diseaseType,
+        district: input.district,
+      });
+      return existingAlert.id;
+    }
+
+    const createdAlert = await prisma.alert.create({
+      data: {
+        targetZone: input.district,
+        title,
+        message,
+        severity,
+        channel: "EMAIL",
+        isDelivered: false,
+        aiSuggested: true,
+      },
+      select: { id: true },
+    });
+
+    const admins = await prisma.user.findMany({
+      where: { role: "ADMIN", isActive: true },
+      select: { email: true },
+    });
+    const emails = admins
+      .map((u: { email: string | null }) => u.email)
+      .filter(Boolean) as string[];
+    emails.push(...EmailSender.parseConfiguredAlertRecipients());
+
+    const emailResult = await EmailSender.sendBulkSpikeAlertEmails(emails, {
+      disease: input.diseaseType,
+      location: input.district,
+      currentCases: input.currentCases,
+      currentDeaths: input.currentDeaths,
+      mortalityRate: input.mortalityRate,
+      expectedCases: input.expectedCases,
+      zScore: input.zScore,
+      severity,
+      summary: message,
+    });
+
+    await prisma.alert.update({
+      where: { id: createdAlert.id },
+      data: {
+        deliveryCount: emailResult.delivered,
+        failedCount: emailResult.failed,
+        isDelivered: emailResult.delivered > 0,
+      },
+    });
+
+    Logger.warn("Spike email alert created for admins", {
+      alertId: createdAlert.id,
+      diseaseType: input.diseaseType,
+      district: input.district,
+      severity,
+      delivered: emailResult.delivered,
+      failed: emailResult.failed,
+    });
+
+    return createdAlert.id;
+  }
+
   static enqueueZScoreAnomalyTrigger(reportId: string): void {
     setImmediate(async () => {
       await this.triggerZScoreAnomaly(reportId);
@@ -494,7 +632,7 @@ export class AIService {
       try {
         const response = await this.postJson(endpoint, payload);
         if (response.statusCode >= 200 && response.statusCode < 300) {
-          const parsedResponse = this.parseZScoreApiResponse(response.body);
+          const parsedResponse = this.parseDetectionApiResponse(response.body);
           const classification = String(
             parsedResponse?.classification ?? "",
           ).toUpperCase();
@@ -660,7 +798,7 @@ export class AIService {
         diseaseType: { equals: input.diseaseType, mode: "insensitive" },
         timestamp: { gte: lookbackStart, lte: lookbackEnd },
       },
-      select: { timestamp: true, caseCount: true },
+      select: { timestamp: true, caseCount: true, deathCount: true },
       orderBy: { timestamp: "asc" },
     });
 
@@ -672,6 +810,12 @@ export class AIService {
 
     const values = historicalReports.map((r) => r.caseCount);
     const currentCases = values[values.length - 1];
+    const currentDeaths = historicalReports[historicalReports.length - 1]?.deathCount ?? 0;
+    const totalCases = historicalReports.reduce((sum, report) => sum + report.caseCount, 0);
+    const totalDeaths = historicalReports.reduce((sum, report) => sum + report.deathCount, 0);
+    const mortalityRate = totalCases > 0 ? totalDeaths / totalCases : 0;
+    const mortalitySignal =
+      currentDeaths >= 3 || (currentDeaths > 0 && mortalityRate >= 0.1);
     const baseline = values.slice(0, -1);
     const baselineForStats = baseline.length > 0 ? baseline : values;
     const stats = this.computeStats(baselineForStats);
@@ -694,7 +838,7 @@ export class AIService {
       try {
         const response = await this.postJson(endpoint, payload);
         if (response.statusCode >= 200 && response.statusCode < 300) {
-          const parsed = this.parseZScoreApiResponse(response.body);
+          const parsed = this.parseDetectionApiResponse(response.body);
           if (typeof parsed?.z_score === "number") {
             zScore = parsed.z_score;
           }
@@ -716,8 +860,25 @@ export class AIService {
         classification = zScore > 2 ? "ANOMALY" : "NORMAL";
       }
     }
+    if (mortalitySignal) {
+      classification = "ANOMALY";
+    }
 
     let signalId: string | undefined;
+    let alertId: string | undefined;
+    if (classification === "ANOMALY") {
+      alertId = await this.createSpikeAlertAndEmailAdmins({
+        diseaseType: input.diseaseType,
+        district: input.district,
+        currentCases,
+        currentDeaths,
+        mortalityRate,
+        expectedCases: payload.historical_mean,
+        zScore,
+        source: "MANUAL_ANALYSIS",
+      });
+    }
+
     if (input.persist) {
       const persisted = await this.persistAnomalySignal({
         district: { district: input.district, diseaseType: input.diseaseType },
@@ -727,6 +888,7 @@ export class AIService {
         sampleSize: stats.sampleSize,
         lookbackStart,
         lookbackEnd,
+        alertId,
         manual: true,
         notes: input.notes,
       });
@@ -737,6 +899,9 @@ export class AIService {
       district: input.district,
       diseaseType: input.diseaseType,
       currentCases,
+      currentDeaths,
+      mortalityRate: Number(mortalityRate.toFixed(4)),
+      mortalitySignal,
       historicalMean: payload.historical_mean,
       stdDev: payload.std_dev,
       zScore: typeof zScore === "number" ? Number(zScore.toFixed(4)) : undefined,
@@ -746,6 +911,98 @@ export class AIService {
       lookbackEnd,
       thresholdSigma: 2,
       signalId,
+    };
+  }
+
+  /**
+   * Ad-hoc ARIMA forecaster used by /analytics/predictions/run.
+   * The latest report is treated as the observed value to classify against the
+   * next-step forecast generated from earlier reports in the lookback window.
+   */
+  static async runAdHocPrediction(input: {
+    district: string;
+    diseaseType: string;
+    lookbackDays?: number;
+    thresholdSigma?: number;
+    arimaOrder?: [number, number, number];
+  }): Promise<AdHocPredictionResult> {
+    const lookbackDays = Math.max(8, Math.min(180, input.lookbackDays ?? 30));
+    const thresholdSigma = Math.max(
+      0.1,
+      Math.min(10, input.thresholdSigma ?? 1.5),
+    );
+    const arimaOrder = input.arimaOrder ?? [1, 1, 1];
+    const lookbackEnd = new Date();
+    const lookbackStart = new Date(lookbackEnd);
+    lookbackStart.setUTCDate(lookbackStart.getUTCDate() - lookbackDays);
+
+    const reports = await prisma.diseaseReport.findMany({
+      where: {
+        district: { equals: input.district, mode: "insensitive" },
+        diseaseType: { equals: input.diseaseType, mode: "insensitive" },
+        timestamp: { gte: lookbackStart, lte: lookbackEnd },
+      },
+      select: { timestamp: true, caseCount: true },
+      orderBy: { timestamp: "asc" },
+    });
+
+    if (reports.length < 9) {
+      throw new Error(
+        `At least 9 reports are required for ARIMA prediction for ${input.diseaseType} in ${input.district}; found ${reports.length}`,
+      );
+    }
+
+    const values = reports.map((r) => r.caseCount);
+    const currentCases = values[values.length - 1];
+    const historicalSeries = values.slice(0, -1);
+
+    const payload: ArimaPayload = {
+      method: "arima",
+      current_cases: currentCases,
+      historical_series: historicalSeries,
+      arima_order: arimaOrder,
+      anomaly_threshold: thresholdSigma,
+    };
+
+    const endpoint = new URL(
+      env.AI_SERVICE_ZSCORE_PATH,
+      env.AI_SERVICE_BASE_URL,
+    ).toString();
+
+    const response = await this.postJson(endpoint, payload);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw new Error(
+        `Prediction service returned status ${response.statusCode}: ${response.body.slice(0, 200)}`,
+      );
+    }
+
+    const parsed = this.parseDetectionApiResponse(response.body);
+    if (
+      typeof parsed?.forecast_next !== "number" ||
+      typeof parsed?.residual_std !== "number"
+    ) {
+      throw new Error("Prediction service returned an invalid ARIMA response");
+    }
+
+    return {
+      district: input.district,
+      diseaseType: input.diseaseType,
+      currentCases,
+      forecastNext: parsed.forecast_next,
+      residualStd: parsed.residual_std,
+      zScore:
+        typeof parsed.z_score === "number"
+          ? Number(parsed.z_score.toFixed(4))
+          : undefined,
+      classification:
+        String(parsed.classification ?? "").toUpperCase() === "ANOMALY"
+          ? "ANOMALY"
+          : "NORMAL",
+      sampleSize: historicalSeries.length,
+      lookbackStart,
+      lookbackEnd,
+      thresholdSigma,
+      arimaOrder,
     };
   }
 

@@ -63,4 +63,16 @@ router.post(
   AnalyticsController.runAnomaly,
 );
 
+/**
+ * POST /analytics/predictions/run
+ * Body: { district, diseaseType, lookbackDays?, thresholdSigma? }
+ * Runs the Python /detect ARIMA forecaster on stored reports.
+ */
+router.post(
+  "/predictions/run",
+  authenticate,
+  authorize(Role.ADMIN, Role.RESEARCHER),
+  AnalyticsController.runPrediction,
+);
+
 export default router;

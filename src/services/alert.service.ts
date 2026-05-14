@@ -3,6 +3,7 @@ import { AdvisoryStatus } from "@prisma/client";
 import { AppError } from "../utils/AppError";
 import logger from "../utils/logger";
 import { EmailSender } from "../utils/EmailSender";
+import { env } from "../config/env.config";
 
 const VALID_SEVERITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
 const VALID_CHANNELS = ["WEB", "SMS", "USSD", "EMAIL"] as const;
@@ -23,6 +24,7 @@ type AlertManagementView = {
   isDelivered: boolean;
   aiSuggested: boolean;
   sourceReportId: string | null;
+  createdAt: string;
 };
 
 type AlertNotificationDetails = {
@@ -44,6 +46,7 @@ export class AlertService {
     targetZone: string;
     aiSuggested: boolean;
     sourceReportId: string | null;
+    createdAt: Date;
     disease: { name: string } | null;
     advisory: { content: string } | null;
   }): AlertManagementView {
@@ -58,7 +61,55 @@ export class AlertService {
       isDelivered: alert.isDelivered,
       aiSuggested: alert.aiSuggested,
       sourceReportId: alert.sourceReportId,
+      createdAt: alert.createdAt.toISOString(),
     };
+  }
+
+  private static async sendCriticalMortalityEmail(input: {
+    alertId: string;
+    diseaseType: string;
+    district: string;
+    totalCases: number;
+    totalDeaths: number;
+    mortalityRate: number;
+    message: string;
+  }) {
+    const adminEmails = await prisma.user.findMany({
+      where: { role: "ADMIN", isActive: true },
+      select: { email: true },
+    });
+
+    const emails = adminEmails.map((u) => u.email).filter(Boolean);
+    emails.push(...EmailSender.parseConfiguredAlertRecipients());
+
+    const emailResult = await EmailSender.sendBulkSpikeAlertEmails(emails, {
+      disease: input.diseaseType,
+      location: input.district,
+      currentCases: input.totalCases,
+      currentDeaths: input.totalDeaths,
+      mortalityRate: input.mortalityRate,
+      expectedCases: input.totalCases,
+      severity: "CRITICAL",
+      summary: input.message,
+    });
+
+    await prisma.alert.update({
+      where: { id: input.alertId },
+      data: {
+        deliveryCount: emailResult.delivered,
+        failedCount: emailResult.failed,
+        isDelivered: emailResult.delivered > 0,
+      },
+    });
+
+    logger.warn("Critical mortality email notification processed", {
+      alertId: input.alertId,
+      diseaseType: input.diseaseType,
+      district: input.district,
+      delivered: emailResult.delivered,
+      failed: emailResult.failed,
+      duplicateResendEnabled: env.ALERT_RESEND_DUPLICATE_EMAILS,
+    });
   }
 
   private static parseSeverity(value: unknown): AlertSeverityValue {
@@ -105,7 +156,7 @@ export class AlertService {
 
     const emails = recipients
       .map((user) => user.email)
-      .filter((email): email is string => !!email);
+      .filter((email) => Boolean(email));
 
     const emailResult = await EmailSender.sendBulkAlertApprovalEmails(emails, {
       disease: alert.disease?.name ?? "Unknown disease",
@@ -405,13 +456,45 @@ export class AlertService {
     if (totalCases === 0) return;
 
     const mortalityRate = totalDeaths / totalCases;
-    if (mortalityRate <= 0.1) return;
+    const highDeathSignal = totalDeaths >= 3 || mortalityRate > 0.1;
+    if (!highDeathSignal) return;
 
     const title = `CRITICAL: ${diseaseType} mortality rate exceeded 10% in ${district}`;
     const message =
       `In the last 24 hours, ${district} reported ${totalDeaths} deaths out of ` +
       `${totalCases} ${diseaseType} cases (${(mortalityRate * 100).toFixed(1)}% mortality rate). ` +
-      `Immediate response required.`;
+      `This is a serious mortality signal and may indicate a severe outbreak spike. Immediate response, verification, and field follow-up are required.`;
+
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const existingAlert = await prisma.alert.findFirst({
+      where: {
+        targetZone: district,
+        title,
+        createdAt: { gte: oneDayAgo },
+      },
+      select: { id: true },
+    });
+
+    if (existingAlert) {
+      logger.info("Skipping duplicate mortality alert", {
+        alertId: existingAlert.id,
+        diseaseType,
+        district,
+        resendDuplicateEmail: env.ALERT_RESEND_DUPLICATE_EMAILS,
+      });
+      if (env.ALERT_RESEND_DUPLICATE_EMAILS) {
+        await this.sendCriticalMortalityEmail({
+          alertId: existingAlert.id,
+          diseaseType,
+          district,
+          totalCases,
+          totalDeaths,
+          mortalityRate,
+          message,
+        });
+      }
+      return;
+    }
 
     const alert = await prisma.alert.create({
       data: {
@@ -433,26 +516,14 @@ export class AlertService {
       mortalityRate: `${(mortalityRate * 100).toFixed(1)}%`,
     });
 
-    const adminEmails = await prisma.user.findMany({
-      where: { role: "ADMIN", isActive: true },
-      select: { email: true },
-    });
-
-    const emails = adminEmails.map((u) => u.email).filter((e): e is string => !!e);
-
-    const emailResult = await EmailSender.sendBulkAlertApprovalEmails(emails, {
-      disease: diseaseType,
-      location: district,
-      advisory: message,
-      severity: "CRITICAL",
-    });
-
-    await prisma.alert.update({
-      where: { id: alert.id },
-      data: {
-        deliveryCount: emailResult.delivered,
-        failedCount: emailResult.failed,
-      },
+    await this.sendCriticalMortalityEmail({
+      alertId: alert.id,
+      diseaseType,
+      district,
+      totalCases,
+      totalDeaths,
+      mortalityRate,
+      message,
     });
   }
 }

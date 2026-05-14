@@ -191,6 +191,68 @@ export class ChatService {
     };
   }
 
+  private static async getPublicDiseaseContext() {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const [topDiseases, recentAnomalies, advisories] = await Promise.all([
+      prisma.diseaseReport.groupBy({
+        by: ["diseaseType"],
+        where: { timestamp: { gte: thirtyDaysAgo } },
+        _sum: { caseCount: true, deathCount: true },
+        _count: { _all: true },
+        orderBy: { _sum: { caseCount: "desc" } },
+        take: 8,
+      }),
+      prisma.anomalySignal.findMany({
+        where: {
+          createdAt: { gte: thirtyDaysAgo },
+          classification: "ANOMALY",
+        },
+        orderBy: { createdAt: "desc" },
+        take: 12,
+        select: {
+          district: true,
+          diseaseType: true,
+          zScore: true,
+          currentCases: true,
+          historicalMean: true,
+          createdAt: true,
+        },
+      }),
+      prisma.advisory.findMany({
+        where: { status: "APPROVED" },
+        select: {
+          diseaseType: true,
+          riskLevel: true,
+          title: true,
+          region: { select: { name: true } },
+          district: { select: { name: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 8,
+      }),
+    ]);
+
+    return {
+      scope: "PUBLIC_NATIONAL_ETHIOPIA",
+      topDiseases: topDiseases.map((item) => ({
+        diseaseType: item.diseaseType,
+        totalCases: item._sum.caseCount ?? 0,
+        totalDeaths: item._sum.deathCount ?? 0,
+        reports: item._count._all,
+      })),
+      recentAnomalies,
+      advisories: advisories.map((item) => ({
+        diseaseType: item.diseaseType,
+        riskLevel: item.riskLevel,
+        title: item.title,
+        region: item.region.name,
+        district: item.district?.name ?? null,
+      })),
+    };
+  }
+
 
   private static async requestGeminiReply(input: { prompt: string }) {
     if (!env.GEMINI_API_KEY) {
@@ -353,6 +415,52 @@ export class ChatService {
       text: assistantMessage.content,
       language: this.mapLanguage(assistantMessage.language),
       createdAt: assistantMessage.createdAt,
+      provider: ai.provider,
+    };
+  }
+
+  static async sendPublicMessage(input: { message: string; language?: string }) {
+    const text = String(input.message ?? "").trim();
+    if (!text) {
+      throw new AppError("message is required", 400);
+    }
+
+    const language = this.mapLanguage(input.language);
+    const context = await this.getPublicDiseaseContext();
+    const languageInstruction =
+      language === "AMHARIC"
+        ? `Respond only in Amharic (አማርኛ). Keep it concise and safe.`
+        : "Respond only in English. Keep it concise and safe.";
+
+    const prompt = [
+      SYSTEM_PROMPT,
+      languageInstruction,
+      "This is an anonymous public visitor. Do not imply saved history or personalized district access.",
+      "Give general public advisory guidance and invite sign up for personalized, unlimited advisory chat.",
+      `National public context: ${JSON.stringify(context)}`,
+      `Visitor message: ${text}`,
+    ].join("\n");
+
+    let ai: { text: string; provider: string };
+    try {
+      ai = await this.requestAssistantReply({ prompt, language });
+    } catch (error) {
+      Logger.error("Public chat provider failed, returning fallback response", { error });
+      ai = {
+        text: this.buildFallbackReply(language, {
+          userRegion: "Ethiopia",
+          userDistrict: null,
+        }),
+        provider: "FALLBACK",
+      };
+    }
+
+    return {
+      id: `guest-${Date.now()}`,
+      role: "ASSISTANT" as const,
+      text: ai.text,
+      language,
+      createdAt: new Date(),
       provider: ai.provider,
     };
   }

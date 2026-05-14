@@ -18,6 +18,12 @@ export class AdvisoryController {
     return sendSuccess(res, reply, "Chat reply generated");
   });
 
+  static sendPublicChatMessage = catchAsync(async (req: Request, res: Response) => {
+    const { message, language } = req.body as { message?: string; language?: string };
+    const reply = await ChatService.sendPublicMessage({ message: message ?? "", language });
+    return sendSuccess(res, reply, "Public chat reply generated");
+  });
+
   static clearChatHistory = catchAsync(async (req: Request, res: Response) => {
     const userId = req.user!.id;
     await ChatService.clearChatHistory(userId);

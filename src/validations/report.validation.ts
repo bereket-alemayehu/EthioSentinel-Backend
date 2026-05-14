@@ -7,9 +7,11 @@ type ReportInput = {
   diseaseId?: unknown;
   caseCount?: unknown;
   deathCount?: unknown;
+  date?: unknown;
+  reportDate?: unknown;
+  timestamp?: unknown;
   notes?: unknown;
   isOfflineCached?: unknown;
-  timestamp?: unknown;
 };
 
 type ValidatedReportInput = {
@@ -18,16 +20,15 @@ type ValidatedReportInput = {
   diseaseId: number | undefined;
   caseCount: number;
   deathCount: number;
+  timestamp: Date | undefined;
   notes: string | undefined;
   isOfflineCached: boolean;
-  timestamp: Date;
 };
 
 /**
  * BR-01: Validates and sanitizes a disease report submission.
  * - Required fields: district, diseaseType
  * - Counts must be non-negative integers
- * - Date must not be in the future
  * - Notes are sanitized to strip PII before persistence
  */
 export function validateAndSanitizeReport(
@@ -57,13 +58,25 @@ export function validateAndSanitizeReport(
     throw new AppError("deathCount cannot exceed caseCount", 400);
   }
 
-  const timestamp = input.timestamp ? new Date(String(input.timestamp)) : new Date();
-  if (Number.isNaN(timestamp.getTime())) {
-    throw new AppError("Invalid timestamp format", 400);
-  }
-  
-  if (timestamp > new Date()) {
-    throw new AppError("Report date cannot be in the future", 400);
+  let timestamp: Date | undefined;
+  const rawDate = input.reportDate ?? input.date ?? input.timestamp;
+  if (rawDate !== undefined && rawDate !== null && rawDate !== "") {
+    const dateText = String(rawDate);
+    const parsed =
+      /^\d{4}-\d{2}-\d{2}$/.test(dateText)
+        ? new Date(`${dateText}T12:00:00.000Z`)
+        : new Date(dateText);
+
+    if (Number.isNaN(parsed.getTime())) {
+      throw new AppError("reportDate must be a valid date", 400);
+    }
+
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+    if (parsed > todayEnd) {
+      throw new AppError("reportDate cannot be in the future", 400);
+    }
+    timestamp = parsed;
   }
 
   let notes: string | undefined;
@@ -74,5 +87,5 @@ export function validateAndSanitizeReport(
   const isOfflineCached = Boolean(input.isOfflineCached ?? false);
   const diseaseId = input.diseaseId ? Number(input.diseaseId) : undefined;
 
-  return { district, diseaseType, diseaseId, caseCount, deathCount, notes, isOfflineCached, timestamp };
+  return { district, diseaseType, diseaseId, caseCount, deathCount, timestamp, notes, isOfflineCached };
 }

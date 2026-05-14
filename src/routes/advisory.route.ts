@@ -8,6 +8,7 @@ const router = Router();
 
 router.get("/chat/history", authenticate, AdvisoryController.getChatHistory);
 router.post("/chat/message", authenticate, AdvisoryController.sendChatMessage);
+router.post("/chat/public/message", AdvisoryController.sendPublicChatMessage);
 router.delete("/chat/history", authenticate, AdvisoryController.clearChatHistory);
 
 router.post("/symptom-check", AdvisoryController.symptomCheck);

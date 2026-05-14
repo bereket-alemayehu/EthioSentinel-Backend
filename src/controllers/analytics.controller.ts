@@ -155,4 +155,33 @@ export class AnalyticsController {
       throw new AppError(message, 400);
     }
   });
+
+  static runPrediction = catchAsync(async (req: Request, res: Response) => {
+    const district = req.body?.district as string | undefined;
+    const diseaseType = req.body?.diseaseType as string | undefined;
+    const lookbackDays = req.body?.lookbackDays
+      ? Number(req.body.lookbackDays)
+      : undefined;
+    const thresholdSigma = req.body?.thresholdSigma
+      ? Number(req.body.thresholdSigma)
+      : undefined;
+
+    if (!district || !diseaseType) {
+      throw new AppError("district and diseaseType are required", 400);
+    }
+
+    try {
+      const result = await AIService.runAdHocPrediction({
+        district,
+        diseaseType,
+        lookbackDays,
+        thresholdSigma,
+      });
+      return sendSuccess(res, result, "Ad-hoc ARIMA prediction completed");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Ad-hoc prediction failed";
+      throw new AppError(message, 400);
+    }
+  });
 }
