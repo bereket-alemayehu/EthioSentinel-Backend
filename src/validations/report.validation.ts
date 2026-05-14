@@ -7,6 +7,9 @@ type ReportInput = {
   diseaseId?: unknown;
   caseCount?: unknown;
   deathCount?: unknown;
+  date?: unknown;
+  reportDate?: unknown;
+  timestamp?: unknown;
   notes?: unknown;
   isOfflineCached?: unknown;
 };
@@ -17,6 +20,7 @@ type ValidatedReportInput = {
   diseaseId: number | undefined;
   caseCount: number;
   deathCount: number;
+  timestamp: Date | undefined;
   notes: string | undefined;
   isOfflineCached: boolean;
 };
@@ -54,6 +58,27 @@ export function validateAndSanitizeReport(
     throw new AppError("deathCount cannot exceed caseCount", 400);
   }
 
+  let timestamp: Date | undefined;
+  const rawDate = input.reportDate ?? input.date ?? input.timestamp;
+  if (rawDate !== undefined && rawDate !== null && rawDate !== "") {
+    const dateText = String(rawDate);
+    const parsed =
+      /^\d{4}-\d{2}-\d{2}$/.test(dateText)
+        ? new Date(`${dateText}T12:00:00.000Z`)
+        : new Date(dateText);
+
+    if (Number.isNaN(parsed.getTime())) {
+      throw new AppError("reportDate must be a valid date", 400);
+    }
+
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+    if (parsed > todayEnd) {
+      throw new AppError("reportDate cannot be in the future", 400);
+    }
+    timestamp = parsed;
+  }
+
   let notes: string | undefined;
   if (input.notes !== undefined && input.notes !== null && input.notes !== "") {
     notes = sanitizeNotes(String(input.notes));
@@ -62,5 +87,5 @@ export function validateAndSanitizeReport(
   const isOfflineCached = Boolean(input.isOfflineCached ?? false);
   const diseaseId = input.diseaseId ? Number(input.diseaseId) : undefined;
 
-  return { district, diseaseType, diseaseId, caseCount, deathCount, notes, isOfflineCached };
+  return { district, diseaseType, diseaseId, caseCount, deathCount, timestamp, notes, isOfflineCached };
 }

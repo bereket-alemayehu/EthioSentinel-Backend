@@ -187,6 +187,9 @@ export class ReportService {
     isOfflineCached?: boolean;
     status?: ReportStatus;
     notes?: string;
+    date?: string;
+    reportDate?: string;
+    timestamp?: string;
     user: { id: string; role: Role };
   }) {
     const {
@@ -199,11 +202,24 @@ export class ReportService {
       isOfflineCached,
       status,
       notes,
+      date,
+      reportDate,
+      timestamp,
       user,
     } = data;
 
     // BR-01: validate and sanitize input (strips PII from notes, validates counts)
-    const sanitized = validateAndSanitizeReport({ district, diseaseType, caseCount, deathCount, notes, isOfflineCached });
+    const sanitized = validateAndSanitizeReport({
+      district,
+      diseaseType,
+      caseCount,
+      deathCount,
+      date,
+      reportDate,
+      timestamp,
+      notes,
+      isOfflineCached,
+    });
 
     const effectiveReporterId =
       user.role === Role.HEW ? user.id : reporterId;
@@ -225,6 +241,7 @@ export class ReportService {
           isOfflineCached: sanitized.isOfflineCached,
           status: status ?? ReportStatus.PENDING,
           isMortalityPriority: sanitized.deathCount > 0,
+          timestamp: sanitized.timestamp,
           notes: sanitized.notes,
         },
         include: {
@@ -279,6 +296,9 @@ export class ReportService {
     caseCount?: number;
     deathCount?: number;
     notes?: string;
+    date?: string;
+    reportDate?: string;
+    timestamp?: string;
     userId: string;
   }) {
     const report = await prisma.diseaseReport.findUnique({
@@ -295,6 +315,9 @@ export class ReportService {
       diseaseType: data.diseaseType,
       caseCount: data.caseCount,
       deathCount: data.deathCount,
+      date: data.date,
+      reportDate: data.reportDate,
+      timestamp: data.timestamp,
       notes: data.notes,
     });
 
@@ -306,6 +329,7 @@ export class ReportService {
         diseaseId: data.diseaseId,
         caseCount: sanitized.caseCount,
         deathCount: sanitized.deathCount,
+        timestamp: sanitized.timestamp,
         notes: sanitized.notes,
         isMortalityPriority: sanitized.deathCount > 0,
       },

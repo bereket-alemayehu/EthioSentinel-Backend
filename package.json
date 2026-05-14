@@ -6,12 +6,15 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node dist/src/server.js",
     "dev": "nodemon --watch src --ext ts,json --exec ts-node --files src/server.ts",
+    "dev:ai": "cd anomaly-detection-service && .venv/bin/python app.py",
+    "dev:with-ai": "concurrently -n backend,ai -c cyan,magenta \"npm run dev\" \"npm run dev:ai\"",
     "build": "tsc",
     "postinstall": "prisma generate --config prisma.config.ts",
     "generate": "prisma generate --config prisma.config.ts",
     "db:push": "prisma db push --config prisma.config.ts",
     "studio": "prisma studio --config prisma.config.ts",
     "seed": "ts-node --files src/scripts/seed.ts",
+    "seed:prediction-demo": "ts-node --files src/scripts/seed-prediction-demo.ts",
     "test:zscore": "ts-node --files src/scripts/test-zscore-spike.ts"
   },
   "keywords": [],
@@ -20,6 +23,7 @@
   "description": "",
   "dependencies": {
     "@corti/sdk": "^1.2.0",
+    "@getbrevo/brevo": "^5.0.4",
     "@google-cloud/vertexai": "^1.12.0",
     "@google/generative-ai": "^0.24.1",
     "@prisma/adapter-pg": "^7.6.0",
@@ -62,6 +66,7 @@
     "winston": "^3.19.0"
   },
   "devDependencies": {
+    "concurrently": "^9.2.1",
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
