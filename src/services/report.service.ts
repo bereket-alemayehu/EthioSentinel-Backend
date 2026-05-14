@@ -187,6 +187,7 @@ export class ReportService {
     isOfflineCached?: boolean;
     status?: ReportStatus;
     notes?: string;
+    date?: string;
     user: { id: string; role: Role };
   }) {
     const {
@@ -202,8 +203,8 @@ export class ReportService {
       user,
     } = data;
 
-    // BR-01: validate and sanitize input (strips PII from notes, validates counts)
-    const sanitized = validateAndSanitizeReport({ district, diseaseType, caseCount, deathCount, notes, isOfflineCached });
+    // BR-01: validate and sanitize input (strips PII from notes, validates counts, checks date)
+    const sanitized = validateAndSanitizeReport({ district, diseaseType, caseCount, deathCount, notes, isOfflineCached, timestamp: data.date });
 
     const effectiveReporterId =
       user.role === Role.HEW ? user.id : reporterId;
@@ -224,6 +225,7 @@ export class ReportService {
           deathCount: sanitized.deathCount,
           isOfflineCached: sanitized.isOfflineCached,
           status: status ?? ReportStatus.PENDING,
+          timestamp: sanitized.timestamp,
           isMortalityPriority: sanitized.deathCount > 0,
           notes: sanitized.notes,
         },
@@ -279,6 +281,7 @@ export class ReportService {
     caseCount?: number;
     deathCount?: number;
     notes?: string;
+    date?: string;
     userId: string;
   }) {
     const report = await prisma.diseaseReport.findUnique({
@@ -296,6 +299,7 @@ export class ReportService {
       caseCount: data.caseCount,
       deathCount: data.deathCount,
       notes: data.notes,
+      timestamp: data.date
     });
 
     return prisma.diseaseReport.update({
@@ -307,6 +311,7 @@ export class ReportService {
         caseCount: sanitized.caseCount,
         deathCount: sanitized.deathCount,
         notes: sanitized.notes,
+        timestamp: sanitized.timestamp,
         isMortalityPriority: sanitized.deathCount > 0,
       },
     });

@@ -9,6 +9,7 @@ type ReportInput = {
   deathCount?: unknown;
   notes?: unknown;
   isOfflineCached?: unknown;
+  timestamp?: unknown;
 };
 
 type ValidatedReportInput = {
@@ -19,12 +20,14 @@ type ValidatedReportInput = {
   deathCount: number;
   notes: string | undefined;
   isOfflineCached: boolean;
+  timestamp: Date;
 };
 
 /**
  * BR-01: Validates and sanitizes a disease report submission.
  * - Required fields: district, diseaseType
  * - Counts must be non-negative integers
+ * - Date must not be in the future
  * - Notes are sanitized to strip PII before persistence
  */
 export function validateAndSanitizeReport(
@@ -54,6 +57,15 @@ export function validateAndSanitizeReport(
     throw new AppError("deathCount cannot exceed caseCount", 400);
   }
 
+  const timestamp = input.timestamp ? new Date(String(input.timestamp)) : new Date();
+  if (Number.isNaN(timestamp.getTime())) {
+    throw new AppError("Invalid timestamp format", 400);
+  }
+  
+  if (timestamp > new Date()) {
+    throw new AppError("Report date cannot be in the future", 400);
+  }
+
   let notes: string | undefined;
   if (input.notes !== undefined && input.notes !== null && input.notes !== "") {
     notes = sanitizeNotes(String(input.notes));
@@ -62,5 +74,5 @@ export function validateAndSanitizeReport(
   const isOfflineCached = Boolean(input.isOfflineCached ?? false);
   const diseaseId = input.diseaseId ? Number(input.diseaseId) : undefined;
 
-  return { district, diseaseType, diseaseId, caseCount, deathCount, notes, isOfflineCached };
+  return { district, diseaseType, diseaseId, caseCount, deathCount, notes, isOfflineCached, timestamp };
 }

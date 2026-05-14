@@ -26,9 +26,12 @@ export const env = cleanEnv(process.env, {
   AI_SERVICE_TIMEOUT_MS: num({ default: 5000 }),
   AI_SERVICE_RETRY_COUNT: num({ default: 3 }),
   AI_SERVICE_RETRY_DELAY_MS: num({ default: 1000 }),
-  AI_SERVICE_ZSCORE_PATH: str({ default: "/anomaly/zscore" }),
+  AI_SERVICE_ZSCORE_PATH: str({ default: "/detect" }),
   AI_WEBHOOK_TOKEN: str({ default: "" }),
   AI_INTERNAL_TOKEN: str({ default: "" }),
   GEMINI_API_KEY: str({ default: "" }),
   CHAT_BOT_NAME: str({ default: "EthioSentinel Assistant" }),
+  TWILIO_ACCOUNT_SID: str({ default: "" }),
+  TWILIO_AUTH_TOKEN: str({ default: "" }),
+  TWILIO_MESSAGING_SERVICE_SID: str({ default: "" }),
 });

@@ -105,7 +105,7 @@ export class AlertService {
 
     const emails = recipients
       .map((user) => user.email)
-      .filter((email) => Boolean(email));
+      .filter((email): email is string => !!email);
 
     const emailResult = await EmailSender.sendBulkAlertApprovalEmails(emails, {
       disease: alert.disease?.name ?? "Unknown disease",
@@ -438,7 +438,7 @@ export class AlertService {
       select: { email: true },
     });
 
-    const emails = adminEmails.map((u) => u.email).filter(Boolean);
+    const emails = adminEmails.map((u) => u.email).filter((e): e is string => !!e);
 
     const emailResult = await EmailSender.sendBulkAlertApprovalEmails(emails, {
       disease: diseaseType,

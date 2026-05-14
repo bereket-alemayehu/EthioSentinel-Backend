@@ -3,7 +3,8 @@ import { Role } from "@prisma/client";
 export interface ITokenPayload {
   id: string;
   role: Role;
-  email: string;
+  email: string | null;
+  phoneNumber?: string | null;
   iat?: number;
   exp?: number;
 }
@@ -17,9 +18,10 @@ export interface ILoginResponse {
   user: {
     id: string;
     username: string;
-    email: string;
+    email: string | null;
+    phoneNumber?: string | null;
     role: Role;
-    region: string;
+    region: string | null;
     assignedDistrict: string | null;
   };
 }

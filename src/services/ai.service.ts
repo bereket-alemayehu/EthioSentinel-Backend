@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma";
 import { env } from "../config/env.config";
 import Logger from "../utils/logger";
 import { EmailSender } from "../utils/EmailSender";
+import { SmsSender } from "../utils/SmsSender";
 
 type WeeklyAggregate = {
   weekStart: string;
@@ -420,15 +421,39 @@ export class AIService {
       },
     });
 
-    Logger.warn("AI anomaly admin notification created", {
+    // Notify Citizens in the affected district via SMS
+    const citizensInDistrict = await prisma.user.findMany({
+      where: {
+        role: "CITIZEN",
+        assignedDistrict: input.district,
+        isActive: true,
+        phoneNumber: { not: null },
+      },
+      select: { phoneNumber: true },
+    });
+
+    const citizenPhoneNumbers = citizensInDistrict
+      .map((u) => u.phoneNumber)
+      .filter(Boolean) as string[];
+
+    const smsBody = `EthioSentinel Alert: A potential ${input.diseaseType} outbreak has been detected in your area (${input.district}). Please stay tuned for advisories and take necessary precautions.`;
+    
+    let smsResult = { delivered: 0, failed: 0 };
+    if (citizenPhoneNumbers.length > 0) {
+      smsResult = await SmsSender.sendBulkSms(citizenPhoneNumbers, smsBody);
+    }
+
+    Logger.warn("AI anomaly admin and citizen notification created", {
       reportId: input.reportId,
       alertId: createdAlert.id,
       advisoryDraftId: input.advisoryDraftId ?? null,
       diseaseType: input.diseaseType,
       district: input.district,
       severity,
-      delivered: emailResult.delivered,
-      failed: emailResult.failed,
+      emailsDelivered: emailResult.delivered,
+      emailsFailed: emailResult.failed,
+      smsDelivered: smsResult.delivered,
+      smsFailed: smsResult.failed,
     });
 
     return createdAlert.id;

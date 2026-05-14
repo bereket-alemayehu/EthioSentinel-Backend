@@ -25,7 +25,7 @@ const SYSTEM_PROMPT = `You are ${env.CHAT_BOT_NAME} for Ethiopia public health u
 - Never invent numbers that are not in provided context.`;
 
 export class ChatService {
-  private static buildFallbackReply(language: AppLanguage, context: { userDistrict?: string | null; userRegion: string }) {
+  private static buildFallbackReply(language: AppLanguage, context: { userDistrict?: string | null; userRegion: string | null }) {
     if (language === "AMHARIC") {
       return [
         "አሁን ላይ የAI አገልግሎቴ በጊዜያዊነት አልተገኘም።",
@@ -36,7 +36,7 @@ export class ChatService {
 
     return [
       "My AI service is temporarily unavailable.",
-      `Please seek guidance from a nearby health facility in ${context.userDistrict ?? context.userRegion}, especially if symptoms are severe.`,
+      `Please seek guidance from a nearby health facility in ${context.userDistrict ?? context.userRegion ?? "your area"}, especially if symptoms are severe.`,
       "I am an AI assistant, not a doctor. Please consult a healthcare professional for diagnosis and treatment.",
     ].join(" ");
   }
@@ -77,12 +77,16 @@ export class ChatService {
 
   /** Resolves which district names to use for report/anomaly queries (assigned district, or all districts in user's region). */
   private static async resolveUserAreaDistrictNames(user: {
-    region: string;
+    region: string | null;
     assignedDistrict: string | null;
   }): Promise<{ districtNames: string[]; scope: "DISTRICT" | "REGION" | "UNKNOWN" }> {
     const assigned = user.assignedDistrict?.trim();
     if (assigned) {
       return { districtNames: [assigned], scope: "DISTRICT" };
+    }
+
+    if (!user.region) {
+      return { districtNames: [], scope: "UNKNOWN" };
     }
 
     const regionRow = await prisma.region.findFirst({
@@ -155,12 +159,12 @@ export class ChatService {
     const advisories = await prisma.advisory.findMany({
       where: {
         status: "APPROVED",
-        region: {
+        region: user.region ? {
           name: {
             equals: user.region,
             mode: "insensitive",
           },
-        },
+        } : undefined,
       },
       select: {
         diseaseType: true,

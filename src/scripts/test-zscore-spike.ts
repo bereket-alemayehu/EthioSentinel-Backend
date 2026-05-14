@@ -62,7 +62,7 @@ async function ensureUsers() {
     where: { email: "hew@ethiosentinel.com" },
     update: { passwordHash: hewHash, role: Role.HEW, isActive: true },
     create: {
-      username: "hew_user",
+      username: "HEW Professional",
       email: "hew@ethiosentinel.com",
       passwordHash: hewHash,
       role: Role.HEW,

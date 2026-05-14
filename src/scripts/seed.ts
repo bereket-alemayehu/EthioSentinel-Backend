@@ -373,7 +373,7 @@ async function seedUsers() {
       role: Role.HEW,
     },
     create: {
-      username: "hew_user",
+      username: "HEW Professional",
       email: "hew@ethiosentinel.com",
       passwordHash: hewHash,
       role: Role.HEW,
