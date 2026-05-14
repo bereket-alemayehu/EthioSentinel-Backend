@@ -24,6 +24,7 @@ type AlertManagementView = {
   isDelivered: boolean;
   aiSuggested: boolean;
   sourceReportId: string | null;
+  createdAt: string;
 };
 
 type AlertNotificationDetails = {
@@ -45,6 +46,7 @@ export class AlertService {
     targetZone: string;
     aiSuggested: boolean;
     sourceReportId: string | null;
+    createdAt: Date;
     disease: { name: string } | null;
     advisory: { content: string } | null;
   }): AlertManagementView {
@@ -59,6 +61,7 @@ export class AlertService {
       isDelivered: alert.isDelivered,
       aiSuggested: alert.aiSuggested,
       sourceReportId: alert.sourceReportId,
+      createdAt: alert.createdAt.toISOString(),
     };
   }
 
