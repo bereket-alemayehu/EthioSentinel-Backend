@@ -10,7 +10,7 @@ const router = Router();
 router.post(
   "/anomaly/reports/:reportId/trigger",
   authenticate,
-  authorize(Role.ADMIN, Role.RESEARCHER),
+  authorize(Role.ADMIN, Role.RESEARCHER, Role.SUPER_ADMIN),
   AIController.triggerZScoreForReport,
 );
 

@@ -76,13 +76,15 @@ export class ReportController {
     const report = await ReportService.updateReport(id, {
       ...req.body,
       userId: req.user!.id,
+      userRole: req.user!.role,
+      userEmail: req.user!.email,
     });
     return sendSuccess(res, report, "Report updated successfully");
   });
 
   static deleteReport = catchAsync(async (req: Request, res: Response) => {
     const id = String(req.params.id);
-    await ReportService.deleteReport(id, req.user!.id);
+    await ReportService.deleteReport(id, req.user!.id, req.user!.role, req.user!.email);
     return sendSuccess(res, null, "Report deleted successfully");
   });
 }

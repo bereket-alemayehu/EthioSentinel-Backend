@@ -4,6 +4,7 @@ import {
   Language,
 } from "@prisma/client";
 import { AppError } from "../utils/AppError";
+import { AuditService } from "./audit.service";
 
 type SupportedLanguage = "ENGLISH" | "AMHARIC";
 
@@ -321,15 +322,24 @@ export class AdvisoryService {
     };
   }
 
-  static async rejectAdvisory(advisoryId: string) {
+  static async rejectAdvisory(advisoryId: string, actorUserId: string) {
     if (!advisoryId) {
       throw new AppError("Invalid advisory id", 400);
     }
 
-    return prisma.advisory.update({
+    const row = await prisma.advisory.update({
       where: { id: advisoryId },
       data: { status: AdvisoryStatus.REJECTED },
     });
+
+    await AuditService.append({
+      action: "ADVISORY_REJECTED",
+      actorUserId,
+      resourceType: "Advisory",
+      resourceId: advisoryId,
+    });
+
+    return row;
   }
 
   static async createAdvisory(data: {
@@ -398,7 +408,7 @@ export class AdvisoryService {
       throw new AppError("Invalid advisory id", 400);
     }
 
-    return prisma.advisory.update({
+    const row = await prisma.advisory.update({
       where: { id: advisoryId },
       data: {
         status: AdvisoryStatus.APPROVED,
@@ -406,14 +416,23 @@ export class AdvisoryService {
         approvedById: userId,
       },
     });
+
+    await AuditService.append({
+      action: "ADVISORY_APPROVED",
+      actorUserId: userId,
+      resourceType: "Advisory",
+      resourceId: advisoryId,
+    });
+
+    return row;
   }
 
-  static async withdrawAdvisory(advisoryId: string) {
+  static async withdrawAdvisory(advisoryId: string, actorUserId: string) {
     if (!advisoryId) {
       throw new AppError("Invalid advisory id", 400);
     }
 
-    return prisma.advisory.update({
+    const row = await prisma.advisory.update({
       where: { id: advisoryId },
       data: {
         status: AdvisoryStatus.DRAFT,
@@ -421,5 +440,14 @@ export class AdvisoryService {
         approvedById: null,
       },
     });
+
+    await AuditService.append({
+      action: "ADVISORY_WITHDRAWN",
+      actorUserId,
+      resourceType: "Advisory",
+      resourceId: advisoryId,
+    });
+
+    return row;
   }
 }

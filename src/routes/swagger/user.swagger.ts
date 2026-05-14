@@ -24,9 +24,9 @@
 
 /**
  * @swagger
- * /admin/users:
+ * /super-admin/users:
  *   get:
- *     summary: Get all users — admin-only view (ADMIN)
+ *     summary: List all users (SUPER_ADMIN governance)
  *     tags: [Users]
  *     security:
  *       - cookieAuth: []

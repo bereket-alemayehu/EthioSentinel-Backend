@@ -14,7 +14,7 @@ const router = Router();
 router.get(
   "/reports",
   authenticate,
-  authorize(Role.ADMIN, Role.RESEARCHER),
+  authorize(Role.ADMIN, Role.RESEARCHER, Role.SUPER_ADMIN),
   AnalyticsController.getAggregatedReports,
 );
 
@@ -25,7 +25,7 @@ router.get(
 router.get(
   "/geo-stats",
   authenticate,
-  authorize(Role.ADMIN, Role.RESEARCHER),
+  authorize(Role.ADMIN, Role.RESEARCHER, Role.SUPER_ADMIN),
   AnalyticsController.getGeoStats,
 );
 
@@ -36,7 +36,7 @@ router.get(
 router.get(
   "/anomalies",
   authenticate,
-  authorize(Role.ADMIN, Role.RESEARCHER),
+  authorize(Role.ADMIN, Role.RESEARCHER, Role.SUPER_ADMIN),
   AnalyticsController.getAnomalies,
 );
 
@@ -47,7 +47,7 @@ router.get(
 router.get(
   "/anomalies/timeseries",
   authenticate,
-  authorize(Role.ADMIN, Role.RESEARCHER),
+  authorize(Role.ADMIN, Role.RESEARCHER, Role.SUPER_ADMIN),
   AnalyticsController.getAnomalyTimeseries,
 );
 
@@ -59,7 +59,7 @@ router.get(
 router.post(
   "/anomalies/run",
   authenticate,
-  authorize(Role.ADMIN, Role.RESEARCHER),
+  authorize(Role.ADMIN, Role.RESEARCHER, Role.SUPER_ADMIN),
   AnalyticsController.runAnomaly,
 );
 
@@ -71,7 +71,7 @@ router.post(
 router.post(
   "/predictions/run",
   authenticate,
-  authorize(Role.ADMIN, Role.RESEARCHER),
+  authorize(Role.ADMIN, Role.RESEARCHER, Role.SUPER_ADMIN),
   AnalyticsController.runPrediction,
 );
 

@@ -14,13 +14,10 @@ import { AppError } from "../utils/AppError";
  *               District scoping is enforced in report.service.ts, not here.
  *               authorize(Role.HEW, Role.ADMIN)
  *
- *  ADMIN      — full access: all data, approvals, alerts, user management, AI triggers.
- *               Always included in every protected tuple.
+ *  ADMIN      — full operational access: approvals, alerts, map, analytics, AI triggers.
  *
- *  RESEARCHER — read-only analytics.
- *               May GET reports, alerts, advisories, and user listings.
- *               Must never appear on mutation endpoints (POST / PATCH / PUT / DELETE).
- *               authorize(Role.ADMIN, Role.RESEARCHER) on GET-only routes.
+ *  SUPER_ADMIN — governance (super-admin routes) plus the same operational access as ADMIN
+ *               wherever authorize() includes both roles.
  */
 export const authorize = (...roles: Role[]) => {
   return (req: Request, res: Response, next: NextFunction) => {

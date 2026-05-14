@@ -6,6 +6,11 @@ import { Role } from "@prisma/client";
 
 const router = Router();
 
-router.get("/users", authenticate, authorize(Role.ADMIN), UserController.getAllUsers);
+router.get(
+  "/users",
+  authenticate,
+  authorize(Role.ADMIN, Role.SUPER_ADMIN),
+  UserController.getAllUsers,
+);
 
 export default router;

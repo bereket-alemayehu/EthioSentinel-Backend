@@ -4,6 +4,7 @@ import { AppError } from "../utils/AppError";
 import logger from "../utils/logger";
 import { EmailSender } from "../utils/EmailSender";
 import { env } from "../config/env.config";
+import { AuditService } from "./audit.service";
 
 const VALID_SEVERITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
 const VALID_CHANNELS = ["WEB", "SMS", "USSD", "EMAIL"] as const;
@@ -79,7 +80,9 @@ export class AlertService {
       select: { email: true },
     });
 
-    const emails = adminEmails.map((u) => u.email).filter(Boolean);
+    const emails = adminEmails
+      .map((u) => u.email)
+      .filter((e): e is string => e != null && e !== "");
     emails.push(...EmailSender.parseConfiguredAlertRecipients());
 
     const emailResult = await EmailSender.sendBulkSpikeAlertEmails(emails, {
@@ -156,7 +159,7 @@ export class AlertService {
 
     const emails = recipients
       .map((user) => user.email)
-      .filter((email) => Boolean(email));
+      .filter((email): email is string => email != null && email !== "");
 
     const emailResult = await EmailSender.sendBulkAlertApprovalEmails(emails, {
       disease: alert.disease?.name ?? "Unknown disease",
@@ -249,12 +252,18 @@ export class AlertService {
     });
 
     const managementView = this.toAlertManagementView(updatedAlert);
+    await AuditService.append({
+      action: "ALERT_APPROVED",
+      actorUserId: approverUserId,
+      resourceType: "Alert",
+      resourceId: alertId,
+    });
     await this.triggerApprovalNotification(updatedAlert);
 
     return managementView;
   }
 
-  static async rejectAlert(alertId: string) {
+  static async rejectAlert(alertId: string, actorUserId: string) {
     if (!alertId) {
       throw new AppError("Invalid alert id", 400);
     }
@@ -284,7 +293,14 @@ export class AlertService {
       },
     });
 
-    return this.toAlertManagementView(updatedAlert);
+    const view = this.toAlertManagementView(updatedAlert);
+    await AuditService.append({
+      action: "ALERT_REJECTED",
+      actorUserId,
+      resourceType: "Alert",
+      resourceId: alertId,
+    });
+    return view;
   }
 
   static async createAlert(data: {

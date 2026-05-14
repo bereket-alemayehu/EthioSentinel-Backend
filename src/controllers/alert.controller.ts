@@ -27,7 +27,7 @@ export class AlertController {
 
   static rejectAlert = catchAsync(async (req: Request, res: Response) => {
     const alertId = String(req.params.id);
-    const alert = await AlertService.rejectAlert(alertId);
+    const alert = await AlertService.rejectAlert(alertId, req.user!.id);
     return sendSuccess(res, alert, "Alert rejected successfully");
   });
 
