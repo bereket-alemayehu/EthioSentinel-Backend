@@ -1,4 +1,5 @@
 import { BrevoClient, type Brevo } from "@getbrevo/brevo";
+import nodemailer from "nodemailer";
 import { env } from "../config/env.config";
 import {
   generateOTPEmailHTML,
@@ -14,8 +15,25 @@ type AlertApprovalEmailPayload = {
   disease: string;
   location: string;
   advisory: string;
-  severity: string; 
+  severity: string;
+  alertTitle?: string;
 };
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function severityBadgeColor(severity: string): { bg: string; text: string; border: string } {
+  const s = severity.toUpperCase();
+  if (s === "CRITICAL") return { bg: "#fef2f2", text: "#991b1b", border: "#fecaca" };
+  if (s === "HIGH") return { bg: "#fff7ed", text: "#9a3412", border: "#fed7aa" };
+  if (s === "MEDIUM") return { bg: "#fffbeb", text: "#92400e", border: "#fde68a" };
+  return { bg: "#ecfdf5", text: "#065f46", border: "#a7f3d0" };
+}
 
 type SpikeAlertEmailPayload = {
   disease: string;
@@ -27,6 +45,8 @@ type SpikeAlertEmailPayload = {
   zScore?: number;
   severity: string;
   summary: string;
+  /** AI-generated advisory draft text (included in admin spike emails). */
+  aiAdvisoryDraft?: string;
 };
 
 export class EmailSender {
@@ -67,7 +87,92 @@ export class EmailSender {
     return Boolean(env.BREVO_API_KEY && sender.email);
   }
 
+  private static stripEnvQuotes(value: string): string {
+    return value.replace(/^["']|["']$/g, "").trim();
+  }
+
+  /** `xsmtpsib-…` = SMTP relay only; `xkeysib-…` = REST API. */
+  private static usesBrevoSmtpKey(): boolean {
+    return env.BREVO_API_KEY.trim().startsWith("xsmtpsib-");
+  }
+
+  private static getBrevoSmtpLogin(): string {
+    const login =
+      env.BREVO_SMTP_LOGIN ||
+      env.SMTP_USER ||
+      env.EMAIL_USER ||
+      this.getSender().email;
+    return this.stripEnvQuotes(login);
+  }
+
+  private static logBrevoFailureHint(error: unknown) {
+    const errText = error instanceof Error ? error.message : String(error);
+    if (errText.includes("Key not found")) {
+      Logger.error(
+        "Brevo rejected the API key. Use an xkeysib- REST key from Brevo → SMTP & API → API Keys, " +
+          "or keep your xsmtpsib- SMTP key and set BREVO_SMTP_LOGIN from the SMTP tab.",
+      );
+      return;
+    }
+    if (errText.includes("unrecognised IP") || errText.includes("Unauthorized IP")) {
+      Logger.error(
+        "Brevo blocked this server IP. Add your IP under Brevo → Security → Authorized IPs, or disable IP restriction.",
+      );
+      return;
+    }
+    if (errText.includes("Brevo SMTP")) {
+      Logger.error(errText);
+    }
+  }
+
+  private static async sendViaBrevoSmtp(input: {
+    subject: string;
+    htmlContent: string;
+    sender: { email: string; name?: string };
+    to: { email: string; name?: string }[];
+  }) {
+    const pass = env.BREVO_API_KEY.trim();
+    const user = this.getBrevoSmtpLogin();
+    if (!user || !pass) {
+      throw new Error(
+        "Brevo SMTP: set BREVO_SMTP_LOGIN (login from Brevo → SMTP & API → SMTP) and xsmtpsib key as BREVO_API_KEY",
+      );
+    }
+
+    const transport = nodemailer.createTransport({
+      host: env.SMTP_HOST || "smtp-relay.brevo.com",
+      port: env.SMTP_PORT || 587,
+      secure: env.SMTP_SECURE,
+      auth: { user, pass },
+    });
+
+    try {
+      const from = input.sender.name
+        ? `"${input.sender.name}" <${input.sender.email}>`
+        : input.sender.email;
+      await transport.sendMail({
+        from,
+        to: input.to.map((r) =>
+          r.name ? `"${r.name}" <${r.email}>` : r.email,
+        ),
+        subject: input.subject,
+        html: input.htmlContent,
+      });
+    } finally {
+      transport.close();
+    }
+  }
+
   async send() {
+    if (EmailSender.usesBrevoSmtpKey()) {
+      return EmailSender.sendViaBrevoSmtp({
+        subject: this.subject,
+        htmlContent: this.htmlContent,
+        sender: this.sender,
+        to: this.to,
+      });
+    }
+
     const payload: Brevo.SendTransacEmailRequest = {
       subject: this.subject,
       htmlContent: this.htmlContent,
@@ -270,14 +375,17 @@ export class EmailSender {
     const sender = this.getSender();
 
     if (!this.isBrevoConfigured()) {
-      Logger.warn("Brevo not configured; OTP email skipped", { email });
+      Logger.warn("Brevo not configured; OTP email not sent", { email });
+      if (env.NODE_ENV !== "production") {
+        Logger.warn(`[DEV] OTP for ${email}: ${otp} (configure BREVO_API_KEY + EMAIL_FROM)`);
+      }
       this.logDevelopmentFallback({
         title: "OTP",
         to: email,
         subject,
         html,
       });
-      return env.NODE_ENV !== "production";
+      return false;
     }
 
     try {
@@ -291,14 +399,17 @@ export class EmailSender {
       Logger.info("OTP email sent successfully", { email });
       return true;
     } catch (error: any) {
+      const errText = error instanceof Error ? error.message : String(error);
       Logger.error("Error sending OTP email via Brevo", {
         email,
-        error: error instanceof Error ? error.message : String(error),
+        error: errText,
         status: error?.response?.status,
+        brevoMode: this.usesBrevoSmtpKey() ? "smtp" : "rest",
       });
+      this.logBrevoFailureHint(error);
       if (env.NODE_ENV !== "production") {
+        Logger.warn(`[DEV] OTP for ${email}: ${otp} (Brevo send failed — use this code locally)`);
         this.logDevelopmentFallback({ title: "OTP", to: email, subject, html });
-        return true;
       }
       return false;
     }
@@ -358,18 +469,47 @@ export class EmailSender {
     recipients: string[],
     payload: AlertApprovalEmailPayload,
   ) {
-    const subject = `Health Alert Approved: ${payload.disease} (${payload.severity})`;
+    const subject = `EthioSentinel — ${payload.disease} health alert (${payload.location})`;
     const advisoryText =
-      payload.advisory.length > 1200
-        ? `${payload.advisory.slice(0, 1200)}...`
+      payload.advisory.length > 2000
+        ? `${payload.advisory.slice(0, 2000)}…`
         : payload.advisory;
+    const badge = severityBadgeColor(payload.severity);
+    const title = escapeHtml(payload.alertTitle ?? `Health alert: ${payload.disease}`);
+    const advisoryHtml = escapeHtml(advisoryText).replace(/\n/g, "<br/>");
+
     const html = `
-      <h2>Approved Health Alert</h2>
-      <p><strong>Disease:</strong> ${payload.disease}</p>
-      <p><strong>Location:</strong> ${payload.location}</p>
-      <p><strong>Severity:</strong> ${payload.severity}</p>
-      <p><strong>Advisory:</strong></p>
-      <p>${advisoryText}</p>
+      <div style="margin:0;padding:0;background:#f0f7f6;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
+        <div style="max-width:640px;margin:0 auto;padding:24px 16px;">
+          <div style="background:linear-gradient(135deg,#0f6b7c 0%,#0d9488 100%);border-radius:20px 20px 0 0;padding:28px 24px;color:#ffffff;">
+            <p style="margin:0 0 6px;font-size:11px;letter-spacing:2px;text-transform:uppercase;opacity:0.9;font-weight:700;">EthioSentinel</p>
+            <h1 style="margin:0;font-size:22px;line-height:1.3;font-weight:800;">Approved public health alert</h1>
+            <p style="margin:10px 0 0;font-size:14px;line-height:1.5;opacity:0.95;">This message is now live for citizens in the target area.</p>
+          </div>
+          <div style="background:#ffffff;border:1px solid #d1e7e4;border-top:0;border-radius:0 0 20px 20px;padding:24px;box-shadow:0 12px 40px rgba(15,107,124,0.08);">
+            <p style="margin:0 0 16px;font-size:18px;font-weight:800;color:#0f172a;line-height:1.35;">${title}</p>
+            <div style="display:inline-block;background:${badge.bg};color:${badge.text};border:1px solid ${badge.border};border-radius:999px;padding:8px 14px;font-size:11px;font-weight:800;letter-spacing:1px;text-transform:uppercase;margin-bottom:20px;">
+              Severity: ${escapeHtml(payload.severity)}
+            </div>
+            <table style="width:100%;border-collapse:collapse;margin-bottom:22px;">
+              <tr>
+                <td style="padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px 0 0 12px;width:38%;font-size:12px;font-weight:800;color:#64748b;text-transform:uppercase;">Disease</td>
+                <td style="padding:12px 14px;background:#ffffff;border:1px solid #e2e8f0;border-left:0;border-radius:0 12px 12px 0;font-size:16px;font-weight:700;color:#0f172a;">${escapeHtml(payload.disease)}</td>
+              </tr>
+              <tr><td colspan="2" style="height:8px;"></td></tr>
+              <tr>
+                <td style="padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px 0 0 12px;font-size:12px;font-weight:800;color:#64748b;text-transform:uppercase;">Location</td>
+                <td style="padding:12px 14px;background:#ffffff;border:1px solid #e2e8f0;border-left:0;border-radius:0 12px 12px 0;font-size:16px;font-weight:700;color:#0f172a;">${escapeHtml(payload.location)}</td>
+              </tr>
+            </table>
+            <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:16px;padding:18px 20px;">
+              <p style="margin:0 0 10px;font-size:12px;font-weight:800;color:#047857;text-transform:uppercase;letter-spacing:1px;">Public guidance</p>
+              <p style="margin:0;font-size:15px;line-height:1.75;color:#134e4a;">${advisoryHtml}</p>
+            </div>
+            <p style="margin:20px 0 0;font-size:12px;color:#64748b;line-height:1.6;">Citizens in this zone will also see this in the app notification bell. SMS alerts are sent where phone numbers are registered.</p>
+          </div>
+        </div>
+      </div>
     `;
 
     return this.sendBulkHtmlEmail({
@@ -392,6 +532,13 @@ export class EmailSender {
         : "N/A";
     const currentDeaths = payload.currentDeaths ?? 0;
     const subject = `EthioSentinel Critical Health Alert: ${payload.disease} in ${payload.location}`;
+    const advisoryBlock = payload.aiAdvisoryDraft
+      ? `
+            <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:16px;padding:16px;margin:20px 0;">
+              <p style="margin:0 0 8px;font-size:14px;font-weight:800;color:#92400e;">AI advisory draft</p>
+              <p style="margin:0;font-size:14px;line-height:1.7;color:#78350f;white-space:pre-wrap;">${payload.aiAdvisoryDraft.length > 2000 ? `${payload.aiAdvisoryDraft.slice(0, 2000)}…` : payload.aiAdvisoryDraft}</p>
+            </div>`
+      : "";
     const html = `
       <div style="margin:0;padding:0;background:#f4f7f6;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
         <div style="max-width:680px;margin:0 auto;padding:28px 16px;">
@@ -419,6 +566,7 @@ export class EmailSender {
             <p style="margin:0 0 20px;font-size:14px;line-height:1.7;color:#475569;">
               ${payload.summary}
             </p>
+            ${advisoryBlock}
 
             <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:20px 0;">
               <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px;padding:14px;">

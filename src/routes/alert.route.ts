@@ -19,6 +19,13 @@ router.get(
   AlertController.getAllAlerts,
 );
 
+router.get(
+  "/:id",
+  authenticate,
+  authorize(Role.ADMIN, Role.RESEARCHER, Role.SUPER_ADMIN),
+  AlertController.getAlertById,
+);
+
 router.put(
   "/:id/approve",
   authenticate,

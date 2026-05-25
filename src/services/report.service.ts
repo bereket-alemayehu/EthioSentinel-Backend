@@ -226,7 +226,14 @@ export class ReportService {
       isOfflineCached,
     });
 
-    const effectiveReporterId = user.role === Role.HEW ? user.id : reporterId;
+    const trimmedReporterId = reporterId?.trim();
+    const effectiveReporterId =
+      user.role === Role.HEW
+        ? user.id
+        : trimmedReporterId ||
+          (user.role === Role.SUPER_ADMIN || user.role === Role.ADMIN
+            ? user.id
+            : undefined);
 
     if (!effectiveReporterId) {
       throw new AppError("reporterId is required", 400);

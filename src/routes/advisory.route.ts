@@ -36,6 +36,13 @@ router.get(
   AdvisoryController.getApprovedAdvisories,
 );
 
+router.get(
+  "/:id",
+  authenticate,
+  authorize(Role.ADMIN, Role.SUPER_ADMIN),
+  AdvisoryController.getAdvisoryById,
+);
+
 router.post(
   "/",
   authenticate,

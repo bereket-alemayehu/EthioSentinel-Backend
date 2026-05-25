@@ -11,18 +11,28 @@ const GOOGLE_RECAPTCHA_V2_TEST_SECRET =
 export class RecaptchaService {
   static async verify(token: string): Promise<boolean> {
     const configured = process.env.SITESECRET?.trim();
-    const secretKey =
-      configured ||
-      (process.env.NODE_ENV === "development" ? GOOGLE_RECAPTCHA_V2_TEST_SECRET : "");
+    const allowTest = process.env.RECAPTCHA_ALLOW_TEST === "true";
+    const useTestSecret =
+      process.env.NODE_ENV === "development" &&
+      allowTest &&
+      (!configured || configured === GOOGLE_RECAPTCHA_V2_TEST_SECRET);
+    const secretKey = useTestSecret
+      ? GOOGLE_RECAPTCHA_V2_TEST_SECRET
+      : configured ||
+        (process.env.NODE_ENV === "development" && allowTest
+          ? GOOGLE_RECAPTCHA_V2_TEST_SECRET
+          : "");
 
     if (!secretKey) {
-      console.error("reCAPTCHA SITESECRET is missing from environment variables.");
+      console.error(
+        "reCAPTCHA SITESECRET is missing. Set SITESECRET (pair with VITE_RECAPTCHA_SITE_KEY) in .env.",
+      );
       throw new AppError("reCAPTCHA configuration error on server", 500);
     }
 
-    if (!configured && process.env.NODE_ENV === "development") {
+    if (useTestSecret) {
       console.warn(
-        "reCAPTCHA: SITESECRET unset — using Google's v2 test secret in development only. Set SITESECRET for production-like behavior.",
+        "reCAPTCHA: using Google test secret (RECAPTCHA_ALLOW_TEST=true). Use real SITESECRET to remove the red testing banner.",
       );
     }
 
@@ -36,7 +46,9 @@ export class RecaptchaService {
     // Security is maintained by the IP-based rate-limiter applied on the route
     // (loginRateLimiter / registerRateLimiter middlewares).
     if (token === OFFLINE_TOKEN) {
-      console.info("[reCAPTCHA] Offline bypass used – skipping Google verification.");
+      console.info(
+        "[reCAPTCHA] Offline bypass used – skipping Google verification.",
+      );
       return true;
     }
 
@@ -49,7 +61,7 @@ export class RecaptchaService {
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",
           },
-        }
+        },
       );
 
       const data = response.data;

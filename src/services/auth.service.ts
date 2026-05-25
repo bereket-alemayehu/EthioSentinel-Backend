@@ -7,6 +7,17 @@ import { haversineKm } from "../utils/geo.util";
 import { SmsService } from "./sms.service";
 import { EmailSender } from "../utils/EmailSender";
 import { AuditService } from "./audit.service";
+import { env } from "../config/env.config";
+import Logger from "../utils/logger";
+
+export type OtpChannel = "email" | "sms";
+
+export type OtpDeliveryResult = {
+  email: boolean;
+  sms: boolean;
+  /** True when dev mode logged the OTP to the terminal because Brevo/Twilio did not send. */
+  devConsoleOnly?: boolean;
+};
 
 export type LoginAuditContext = {
   ipAddress?: string | null;
@@ -14,6 +25,103 @@ export type LoginAuditContext = {
 };
 
 export class AuthService {
+  /** Send OTP via the channel the user chose (email or SMS, not both). */
+  private static async deliverVerificationOtp(
+    contact: { email: string | null; phoneNumber: string | null },
+    otpCode: string,
+    channel: OtpChannel,
+  ): Promise<OtpDeliveryResult> {
+    const result: OtpDeliveryResult = { email: false, sms: false };
+
+    if (channel === "email") {
+      if (!contact.email) {
+        throw new AppError("Email is required to send a verification code by email", 400);
+      }
+      try {
+        result.email = await EmailSender.sendOTP(contact.email, otpCode);
+        if (!result.email && env.NODE_ENV !== "production") {
+          result.devConsoleOnly = true;
+        }
+      } catch (err) {
+        Logger.error("OTP email delivery failed", {
+          email: contact.email,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        if (env.NODE_ENV !== "production") {
+          result.devConsoleOnly = true;
+        }
+      }
+    } else {
+      if (!contact.phoneNumber) {
+        throw new AppError(
+          "Phone number is required to send a verification code by SMS",
+          400,
+        );
+      }
+      try {
+        const sms = await SmsService.sendOtp(contact.phoneNumber, otpCode);
+        result.sms = sms != null;
+        if (!result.sms && env.NODE_ENV !== "production") {
+          result.devConsoleOnly = true;
+        }
+      } catch (err) {
+        Logger.error("OTP SMS delivery failed", {
+          phone: contact.phoneNumber,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        if (env.NODE_ENV !== "production") {
+          result.devConsoleOnly = true;
+        }
+      }
+    }
+
+    if (result.devConsoleOnly && env.NODE_ENV !== "production") {
+      Logger.warn(
+        `[DEV] Verification OTP (${channel}) — copy this code: ${otpCode}`,
+        {
+          email: contact.email ?? undefined,
+          phone: contact.phoneNumber ?? undefined,
+          hint: "Not in inbox until Brevo/Twilio is fixed (see Brevo Security → Authorized IPs if email fails with 401).",
+        },
+      );
+    }
+
+    return result;
+  }
+
+  static buildOtpDeliveryMessage(
+    delivery: OtpDeliveryResult,
+    contact: { email: string | null; phoneNumber: string | null },
+  ): string {
+    if (delivery.email && delivery.sms) {
+      return "A 6-digit verification code was sent to your email and phone.";
+    }
+    if (delivery.email) {
+      return "A 6-digit verification code was sent to your email.";
+    }
+    if (delivery.sms) {
+      return "A 6-digit verification code was sent to your phone via SMS.";
+    }
+    if (delivery.devConsoleOnly && env.NODE_ENV !== "production") {
+      if (contact.email) {
+        return (
+          "Email was not delivered. Check Brevo: use an xkeysib- API key, or xsmtpsib- SMTP key with BREVO_SMTP_LOGIN. " +
+          "Use the dev code below if you are testing locally."
+        );
+      }
+      return (
+        "SMS was not delivered. Use the dev code shown below or in the backend terminal ([DEV] Verification OTP)."
+      );
+    }
+    if (env.NODE_ENV !== "production") {
+      return "Could not deliver the code. Check the backend terminal for [DEV] Verification OTP.";
+    }
+    if (contact.email) {
+      return "We could not send the verification email. Check spam, Brevo sender settings, or try SMS.";
+    }
+    return "We could not send the verification SMS. Try resend or contact support.";
+  }
+
   static async login(
     identifier?: string,
     password?: string,
@@ -124,6 +232,7 @@ export class AuthService {
     username?: string;
     region?: string;
     assignedDistrict?: string | null;
+    otpChannel?: OtpChannel;
   }) {
     const email = input.email ? String(input.email).trim().toLowerCase() : null;
     const phoneNumber = input.phoneNumber ? String(input.phoneNumber).trim() : null;
@@ -131,10 +240,24 @@ export class AuthService {
     const username = String(input.username ?? "").trim();
     const region = input.region ? String(input.region).trim() : null;
     const assignedDistrict = input.assignedDistrict?.trim() || null;
+    const otpChannel: OtpChannel =
+      input.otpChannel === "sms" ? "sms" : "email";
 
-    if ((!email && !phoneNumber) || !password || !username) {
+    if (!password || !username) {
+      throw new AppError("Password and username are required", 400);
+    }
+    if (otpChannel === "email" && !email) {
+      throw new AppError("Email is required when sending the code by email", 400);
+    }
+    if (otpChannel === "sms" && !phoneNumber) {
       throw new AppError(
-        "Email or Phone Number, password, and username are required",
+        "Phone number is required when sending the code by SMS",
+        400,
+      );
+    }
+    if (!email && !phoneNumber) {
+      throw new AppError(
+        "Provide at least an email or phone number for your account",
         400,
       );
     }
@@ -179,6 +302,7 @@ export class AuthService {
           assignedDistrict,
           otpCode,
           otpExpiresAt,
+          otpPreferredChannel: otpChannel,
           email,        // Update email/phone in case they changed one of them in the retry
           phoneNumber,
         },
@@ -204,9 +328,10 @@ export class AuthService {
           role: Role.CITIZEN,
           region,
           assignedDistrict,
-          isActive: false, 
+          isActive: false,
           otpCode,
           otpExpiresAt,
+          otpPreferredChannel: otpChannel,
         },
         select: {
           id: true,
@@ -220,18 +345,13 @@ export class AuthService {
       });
     }
 
-    // ── 5. Delivery Prioritization ──────────────────────────────────────────
-    if (user.email) {
-      await EmailSender.sendOTP(user.email, otpCode).catch(err => {
-        console.error("OTP Email failed:", err);
-      });
-    } else if (user.phoneNumber) {
-      await SmsService.sendOtp(user.phoneNumber, otpCode).catch(err => {
-        console.error("SMS failed:", err);
-      });
-    }
+    const otpDelivery = await this.deliverVerificationOtp(
+      { email: user.email, phoneNumber: user.phoneNumber },
+      otpCode,
+      otpChannel,
+    );
 
-    return user;
+    return { user, otpDelivery, otpChannel };
   }
 
   static async verifyOtp(userId: string, otpCode: string) {
@@ -286,7 +406,7 @@ export class AuthService {
     };
   }
 
-  static async resendVerificationOtp(userId: string) {
+  static async resendVerificationOtp(userId: string, otpChannel: OtpChannel) {
     const user = await prisma.user.findUnique({
       where: { id: userId },
     });
@@ -314,20 +434,38 @@ export class AuthService {
       },
     });
 
-    if (user.email) {
-      await EmailSender.sendOTP(user.email, otpCode).catch((err) => {
-        console.error("Email resend failed:", err);
-      });
-    } else if (user.phoneNumber) {
-      await SmsService.sendOtp(user.phoneNumber, otpCode).catch((err) => {
-        console.error("SMS resend failed:", err);
-      });
-    }
+    const otpDelivery = await this.deliverVerificationOtp(
+      { email: user.email, phoneNumber: user.phoneNumber },
+      otpCode,
+      otpChannel,
+    );
 
-    return { success: true };
+    return {
+      success: true,
+      otpDelivery,
+      otpChannel,
+      email: user.email,
+      phoneNumber: user.phoneNumber,
+    };
   }
 
-  static async forgotPassword(identifier: string) {
+  private static resolveOtpChannelForUser(
+    user: { email: string | null; phoneNumber: string | null; otpPreferredChannel: string | null },
+    requested?: OtpChannel,
+  ): OtpChannel {
+    if (requested === "email" || requested === "sms") {
+      return requested;
+    }
+    const stored = user.otpPreferredChannel?.trim().toLowerCase();
+    if (stored === "email" || stored === "sms") {
+      return stored;
+    }
+    if (user.email) return "email";
+    if (user.phoneNumber) return "sms";
+    return "email";
+  }
+
+  static async forgotPassword(identifier: string, otpChannel?: OtpChannel) {
     const cleanId = String(identifier).trim();
     const user = await prisma.user.findFirst({
       where: {
@@ -339,8 +477,21 @@ export class AuthService {
     });
 
     if (!user) {
-      // Don't leak user existence, return success anyway
-      return { success: true };
+      return {
+        success: true,
+        otpDelivery: { email: false, sms: false } as OtpDeliveryResult,
+        otpChannel: "email" as OtpChannel,
+        email: null,
+        phoneNumber: null,
+      };
+    }
+
+    const channel = this.resolveOtpChannelForUser(user, otpChannel);
+    if (channel === "email" && !user.email) {
+      throw new AppError("This account has no email on file. Use SMS or contact support.", 400);
+    }
+    if (channel === "sms" && !user.phoneNumber) {
+      throw new AppError("This account has no phone on file. Use email or contact support.", 400);
     }
 
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
@@ -351,26 +502,51 @@ export class AuthService {
       data: {
         otpCode,
         otpExpiresAt,
+        otpPreferredChannel: channel,
       },
     });
 
-    if (user.email) {
-      await EmailSender.sendOTP(user.email, otpCode).catch((err) => {
-        console.error("Email forgot password failed:", err);
-      });
-    } else if (user.phoneNumber) {
-      await SmsService.sendOtp(user.phoneNumber, otpCode).catch((err) => {
-        console.error("SMS forgot password failed:", err);
-      });
-    }
+    const otpDelivery = await this.deliverVerificationOtp(
+      { email: user.email, phoneNumber: user.phoneNumber },
+      otpCode,
+      channel,
+    );
 
-    return { success: true };
+    return {
+      success: true,
+      otpDelivery,
+      otpChannel: channel,
+      email: user.email,
+      phoneNumber: user.phoneNumber,
+      devOtpCode:
+        env.NODE_ENV !== "production" && otpDelivery.devConsoleOnly
+          ? otpCode
+          : undefined,
+    };
   }
 
-  static async resetPassword(phoneNumber: string, otpCode: string, newPassword: string) {
-    const cleanPhone = String(phoneNumber).trim();
-    const user = await prisma.user.findUnique({
-      where: { phoneNumber: cleanPhone },
+  static async getDevOtpForUser(userId: string): Promise<string | undefined> {
+    if (env.NODE_ENV === "production") return undefined;
+    const row = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { otpCode: true },
+    });
+    return row?.otpCode ?? undefined;
+  }
+
+  static async resetPassword(
+    identifier: string,
+    otpCode: string,
+    newPassword: string,
+  ) {
+    const cleanId = String(identifier).trim();
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { phoneNumber: cleanId },
+          { email: cleanId.toLowerCase() },
+        ],
+      },
     });
 
     if (!user) {

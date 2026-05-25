@@ -113,8 +113,10 @@ model User {
   region           String?
   assignedDistrict String?
   clearanceLevel   Int?
-  otpCode          String?
-  otpExpiresAt     DateTime?
+  otpCode              String?
+  otpExpiresAt         DateTime?
+  /** Last channel used for OTP: "email" | "sms" (registration / password reset). */
+  otpPreferredChannel  String?
   tokenVersion     Int             @default(0)
   submittedReports   DiseaseReport[] @relation("ReportSubmittedBy")
   approvedAdvisories Advisory[]      @relation("AdvisoryApprovedBy")

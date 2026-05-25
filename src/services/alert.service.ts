@@ -5,6 +5,13 @@ import logger from "../utils/logger";
 import { EmailSender } from "../utils/EmailSender";
 import { env } from "../config/env.config";
 import { AuditService } from "./audit.service";
+import {
+  buildCitizenSmsAlert,
+  enrichCitizenAdvisoryContent,
+  resolveDiseaseDisplayName,
+  sanitizePublicHealthText,
+} from "../utils/healthMessaging";
+import { SmsSender } from "../utils/SmsSender";
 
 const VALID_SEVERITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
 const VALID_CHANNELS = ["WEB", "SMS", "USSD", "EMAIL"] as const;
@@ -16,10 +23,14 @@ type AlertWorkflowStatus = "Draft" | "Approved";
 
 type AlertManagementView = {
   id: string;
+  title: string;
+  message: string;
   disease: string | null;
   severity: string;
-  channelString: string;
+  channel: string;
   advisory: string;
+  advisoryId: string | null;
+  advisoryTitle: string | null;
   status: AlertWorkflowStatus;
   targetZone: string;
   isDelivered: boolean;
@@ -33,30 +44,56 @@ type AlertNotificationDetails = {
   targetZone: string;
   severity: string;
   message: string;
+  title?: string;
   disease: { name: string } | null;
-  advisory: { content: string } | null;
+  advisory: { content: string; diseaseType?: string; title?: string } | null;
 };
 
 export class AlertService {
   private static toAlertManagementView(alert: {
     id: string;
+    title: string;
     severity: string;
     channel: string;
     message: string;
     isDelivered: boolean;
     targetZone: string;
     aiSuggested: boolean;
+    advisoryId: string | null;
     sourceReportId: string | null;
     createdAt: Date;
     disease: { name: string } | null;
-    advisory: { content: string } | null;
+    advisory: {
+      id: string;
+      title: string;
+      content: string;
+      diseaseType?: string;
+    } | null;
   }): AlertManagementView {
+    const diseaseLabel = resolveDiseaseDisplayName({
+      diseaseName: alert.disease?.name,
+      diseaseType: alert.advisory?.diseaseType,
+      title: alert.title,
+    });
+    const publicAdvisory = enrichCitizenAdvisoryContent(
+      alert.advisory?.content ?? alert.message,
+      {
+        diseaseType: alert.advisory?.diseaseType ?? diseaseLabel,
+        district: alert.targetZone,
+        riskLevel: alert.severity,
+      },
+    );
+
     return {
       id: alert.id,
-      disease: alert.disease?.name ?? null,
+      title: alert.title,
+      message: sanitizePublicHealthText(alert.message) || alert.message,
+      disease: diseaseLabel,
       severity: alert.severity,
-      channelString: alert.channel,
-      advisory: alert.advisory?.content ?? alert.message,
+      channel: alert.channel,
+      advisory: publicAdvisory || alert.message,
+      advisoryId: alert.advisoryId,
+      advisoryTitle: alert.advisory?.title ?? null,
       status: alert.isDelivered ? "Approved" : "Draft",
       targetZone: alert.targetZone,
       isDelivered: alert.isDelivered,
@@ -76,7 +113,7 @@ export class AlertService {
     message: string;
   }) {
     const adminEmails = await prisma.user.findMany({
-      where: { role: "ADMIN", isActive: true },
+      where: { role: { in: ["ADMIN", "SUPER_ADMIN"] }, isActive: true },
       select: { email: true },
     });
 
@@ -143,29 +180,56 @@ export class AlertService {
     return normalized as AlertChannelValue;
   }
 
-  private static async triggerApprovalNotification(
-    alert: AlertNotificationDetails,
-  ) {
-    const recipients = await prisma.user.findMany({
+  private static async collectAdminNotificationEmails(): Promise<string[]> {
+    const admins = await prisma.user.findMany({
       where: {
         isActive: true,
-        OR: [
-          { assignedDistrict: alert.targetZone },
-          { region: alert.targetZone },
-        ],
+        role: { in: ["ADMIN", "SUPER_ADMIN"] },
+        email: { not: null },
       },
       select: { email: true },
     });
+    const emails = admins
+      .map((u) => u.email)
+      .filter((e): e is string => e != null && e.trim() !== "");
+    emails.push(...EmailSender.parseConfiguredAlertRecipients());
+    return [...new Set(emails)];
+  }
 
-    const emails = recipients
-      .map((user) => user.email)
-      .filter((email): email is string => email != null && email !== "");
+  private static async notifyAdminsOfAiAlert(alert: {
+    id: string;
+    title: string;
+    targetZone: string;
+    severity: string;
+    message: string;
+    disease: { name: string } | null;
+    advisory: { content: string; diseaseType?: string } | null;
+  }) {
+    const emails = await this.collectAdminNotificationEmails();
+    if (emails.length === 0) {
+      logger.warn("No admin emails configured for AI alert notification", {
+        alertId: alert.id,
+      });
+      return;
+    }
+
+    const advisoryText =
+      alert.advisory?.content?.trim() ||
+      alert.message ||
+      "Review the linked advisory draft in the admin dashboard.";
+
+    const diseaseLabel = resolveDiseaseDisplayName({
+      diseaseName: alert.disease?.name,
+      diseaseType: alert.advisory?.diseaseType,
+      title: alert.title,
+    });
 
     const emailResult = await EmailSender.sendBulkAlertApprovalEmails(emails, {
-      disease: alert.disease?.name ?? "Unknown disease",
+      disease: diseaseLabel,
       location: alert.targetZone,
-      advisory: alert.advisory?.content ?? alert.message,
+      advisory: sanitizePublicHealthText(advisoryText) || advisoryText,
       severity: alert.severity,
+      alertTitle: alert.title,
     });
 
     await prisma.alert.update({
@@ -173,6 +237,66 @@ export class AlertService {
       data: {
         deliveryCount: emailResult.delivered,
         failedCount: emailResult.failed,
+      },
+    });
+
+    logger.info("AI alert admin email notification sent", {
+      alertId: alert.id,
+      delivered: emailResult.delivered,
+      failed: emailResult.failed,
+    });
+  }
+
+  private static async triggerApprovalNotification(
+    alert: AlertNotificationDetails,
+  ) {
+    const emails = await this.collectAdminNotificationEmails();
+
+    const diseaseLabel = resolveDiseaseDisplayName({
+      diseaseName: alert.disease?.name,
+      diseaseType: alert.advisory?.diseaseType,
+      title: alert.title,
+    });
+    const publicAdvisory = sanitizePublicHealthText(
+      alert.advisory?.content ?? alert.message,
+    );
+
+    const emailResult = await EmailSender.sendBulkAlertApprovalEmails(emails, {
+      disease: diseaseLabel,
+      location: alert.targetZone,
+      advisory: publicAdvisory,
+      severity: alert.severity,
+      alertTitle: alert.title ?? `Health alert: ${diseaseLabel}`,
+    });
+
+    const citizensInDistrict = await prisma.user.findMany({
+      where: {
+        role: "CITIZEN",
+        assignedDistrict: alert.targetZone,
+        isActive: true,
+        phoneNumber: { not: null },
+      },
+      select: { phoneNumber: true },
+    });
+    const phones = citizensInDistrict
+      .map((u) => u.phoneNumber)
+      .filter(Boolean) as string[];
+    let smsDelivered = 0;
+    let smsFailed = 0;
+    if (phones.length > 0) {
+      const smsResult = await SmsSender.sendBulkSms(
+        phones,
+        buildCitizenSmsAlert(diseaseLabel, alert.targetZone),
+      );
+      smsDelivered = smsResult.delivered;
+      smsFailed = smsResult.failed;
+    }
+
+    await prisma.alert.update({
+      where: { id: alert.id },
+      data: {
+        deliveryCount: emailResult.delivered + smsDelivered,
+        failedCount: emailResult.failed + smsFailed,
       },
     });
 
@@ -207,6 +331,34 @@ export class AlertService {
     return alerts.map((alert) => this.toAlertManagementView(alert));
   }
 
+  static async getAlertById(alertId: string) {
+    if (!alertId) {
+      throw new AppError("Invalid alert id", 400);
+    }
+
+    const alert = await prisma.alert.findUnique({
+      where: { id: alertId },
+      include: {
+        disease: true,
+        advisory: {
+          select: {
+            id: true,
+            title: true,
+            content: true,
+            status: true,
+            diseaseType: true,
+          },
+        },
+      },
+    });
+
+    if (!alert) {
+      throw new AppError("Alert not found", 404);
+    }
+
+    return this.toAlertManagementView(alert);
+  }
+
   static async approveAlert(alertId: string, approverUserId: string) {
     if (!alertId) {
       throw new AppError("Invalid alert id", 400);
@@ -216,7 +368,15 @@ export class AlertService {
       where: { id: alertId },
       include: {
         disease: true,
-        advisory: { select: { id: true, status: true, content: true } },
+        advisory: {
+          select: {
+            id: true,
+            status: true,
+            content: true,
+            diseaseType: true,
+            title: true,
+          },
+        },
       },
     });
 
@@ -376,7 +536,16 @@ export class AlertService {
       },
     });
 
-    return this.toAlertManagementView(alert);
+    const view = this.toAlertManagementView(alert);
+    if (alert.aiSuggested) {
+      await this.notifyAdminsOfAiAlert(alert).catch((err) => {
+        logger.error("Failed to email admins for new AI alert", {
+          alertId: alert.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
+    return view;
   }
 
   /**
@@ -417,11 +586,14 @@ export class AlertService {
       });
     }
 
-    const where = isPrivileged
-      ? undefined
-      : orFilters.length > 0
+    const zoneFilter =
+      orFilters.length > 0
         ? { OR: orFilters }
         : { id: "__none__" };
+
+    const where = isPrivileged
+      ? { isDelivered: true }
+      : { isDelivered: true, ...zoneFilter };
 
     const alerts = await prisma.alert.findMany({
       where,
