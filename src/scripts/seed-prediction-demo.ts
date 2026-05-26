@@ -157,7 +157,20 @@ async function ensureReferenceData() {
     orderBy: { name: "asc" },
   });
   const districts = await prisma.district.findMany({
-    include: { region: true },
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      latitude: true,
+      longitude: true,
+      region: {
+        select: {
+          id: true,
+          name: true,
+          code: true,
+        },
+      },
+    },
     orderBy: [{ regionId: "asc" }, { name: "asc" }],
   });
 

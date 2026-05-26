@@ -39,6 +39,7 @@ export class AuthService {
         role: true,
         region: true,
         assignedDistrict: true,
+        healthFacilityId: true,
         isActive: true,
         tokenVersion: true,
       },
@@ -113,6 +114,7 @@ export class AuthService {
         role: user.role,
         region: user.region,
         assignedDistrict: user.assignedDistrict,
+        healthFacilityId: user.healthFacilityId,
       },
     };
   }
@@ -190,6 +192,7 @@ export class AuthService {
           role: true,
           region: true,
           assignedDistrict: true,
+          healthFacilityId: true,
         },
       });
       console.info(`[Auth] Existing unverified user ${user.id} updated for re-verification.`);
@@ -216,6 +219,7 @@ export class AuthService {
           role: true,
           region: true,
           assignedDistrict: true,
+          healthFacilityId: true,
         },
       });
     }

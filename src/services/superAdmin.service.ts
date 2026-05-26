@@ -74,6 +74,7 @@ export class SuperAdminService {
         isActive: true,
         region: true,
         assignedDistrict: true,
+        healthFacilityId: true,
         clearanceLevel: true,
         createdAt: true,
         updatedAt: true,
@@ -384,6 +385,7 @@ export class SuperAdminService {
       role: Role;
       region: string;
       assignedDistrict?: string | null;
+      healthFacilityId?: number | null;
       phoneNumber?: string | null;
       isActive?: boolean;
     },
@@ -394,11 +396,35 @@ export class SuperAdminService {
     const username = String(input.username).trim();
     const region = String(input.region).trim();
 
-    if (!email || !password || !username || !region) {
-      throw new AppError("email, password, username, and region are required", 400);
+    if (!email || !password || !username) {
+      throw new AppError("email, password, and username are required", 400);
     }
     if (password.length < 8) {
       throw new AppError("Password must be at least 8 characters", 400);
+    }
+
+    const healthFacilityId =
+      typeof input.healthFacilityId === "number" && Number.isFinite(input.healthFacilityId)
+        ? Math.trunc(input.healthFacilityId)
+        : null;
+
+    let healthFacility: { id: number; Region: string; Woreda: string; ownerId: string | null } | null = null;
+    if (input.role === Role.HEW) {
+      if (!healthFacilityId) {
+        throw new AppError("Select a health center for HEW accounts", 400);
+      }
+      healthFacility = await prisma.healthFacility.findUnique({
+        where: { id: healthFacilityId },
+        select: { id: true, Region: true, Woreda: true, ownerId: true },
+      });
+      if (!healthFacility) {
+        throw new AppError("Health center not found", 404);
+      }
+      if (healthFacility.ownerId) {
+        throw new AppError("Selected health center is already assigned to a user", 409);
+      }
+    } else if (!region) {
+      throw new AppError("region is required", 400);
     }
 
     const exists = await prisma.user.findUnique({ where: { email } });
@@ -414,8 +440,15 @@ export class SuperAdminService {
         username,
         passwordHash,
         role: input.role,
-        region,
-        assignedDistrict: input.assignedDistrict?.trim() || null,
+        region:
+          input.role === Role.HEW && healthFacility
+            ? healthFacility.Region
+            : region,
+        assignedDistrict:
+          input.role === Role.HEW && healthFacility
+            ? healthFacility.Woreda.trim() || null
+            : input.assignedDistrict?.trim() || null,
+          healthFacilityId: healthFacility?.id ?? null,
         phoneNumber: input.phoneNumber?.trim() || null,
         isActive: input.isActive !== false,
       },
@@ -428,11 +461,19 @@ export class SuperAdminService {
         isActive: true,
         region: true,
         assignedDistrict: true,
+        healthFacilityId: true,
         clearanceLevel: true,
         createdAt: true,
         updatedAt: true,
       },
     });
+
+    if (input.role === Role.HEW && healthFacility) {
+      await prisma.healthFacility.update({
+        where: { id: healthFacility.id },
+        data: { ownerId: user.id },
+      });
+    }
 
     await AuditService.append({
       action: "USER_CREATED_BY_SUPER_ADMIN",
@@ -444,6 +485,8 @@ export class SuperAdminService {
         email: user.email,
         role: user.role,
         region: user.region,
+        healthFacilityId: healthFacility?.id ?? null,
+        healthCenter: healthFacility ? `${healthFacility.Region} / ${healthFacility.Woreda}` : null,
       },
       ipAddress: auditMeta.ip,
       userAgent: auditMeta.userAgent,

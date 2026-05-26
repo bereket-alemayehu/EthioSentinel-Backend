@@ -82,6 +82,7 @@ model Region {
   primaryLanguage Language   @default(AMHARIC)
   districts       District[]
   advisories      Advisory[]
+  healthFacilities HealthFacility[]
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 }
@@ -95,6 +96,7 @@ model District {
   longitude  Decimal?        @db.Decimal(9, 6)
   region     Region          @relation(fields: [regionId], references: [id], onDelete: Cascade)
   advisories Advisory[]
+  healthFacilities HealthFacility[]
   createdAt  DateTime        @default(now())
   updatedAt  DateTime        @updatedAt
 
@@ -112,6 +114,7 @@ model User {
   isActive         Boolean         @default(true)
   region           String?
   assignedDistrict String?
+  healthFacilityId Int?            @unique
   clearanceLevel   Int?
   otpCode          String?
   otpExpiresAt     DateTime?
@@ -121,6 +124,8 @@ model User {
   createdAlerts      Alert[]         @relation("AlertCreatedBy")
   chatConversations  ChatConversation[]
   auditLogs          AuditLog[]      @relation("AuditActor")
+  ownedFacilities    HealthFacility[]
+  healthFacility     HealthFacility? @relation("UserHealthFacility", fields: [healthFacilityId], references: [id], onDelete: SetNull)
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 
@@ -288,4 +293,33 @@ model Alert {
   @@index([channel])
   @@index([aiSuggested])
   @@index([sourceReportId])
+}
+model HealthFacility {
+  id         Int      @id @default(autoincrement())
+  regionId   Int?    
+  districtId Int?
+  ownerId    String? // references User.id
+
+  Region     String
+  Zone       String
+  Woreda     String
+  HF_Name    String
+  HF_Type    String
+  Y          Decimal? @db.Decimal(9, 6)
+  X          Decimal? @db.Decimal(9, 6)
+  X1         Float?
+  N          Float?
+  E          Float?
+  Z          Float?
+  owner      String? // legacy owner string
+  Status     String?
+
+  region     Region?  @relation(fields: [regionId], references: [id], onDelete: SetNull)
+  district   District?@relation(fields: [districtId], references: [id], onDelete: SetNull)
+  ownerUser  User?    @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  assignedUser User?  @relation("UserHealthFacility")
+
+  @@index([regionId])
+  @@index([districtId])
+  @@unique([districtId, HF_Name], name: "unique_district_hfname")
 }

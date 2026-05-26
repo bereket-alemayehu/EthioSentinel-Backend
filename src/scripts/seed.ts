@@ -7,12 +7,14 @@ import {
 import { prisma } from "../lib/prisma";
 import bcrypt from "bcryptjs";
 import { seedDiseases } from "./seed-diseases";
+import healthcenter, { seedHealthCenters } from "./seed.healthcenter";
+
 
 type DistrictSeed = {
   name: string;
   code: string;
-  latitude: number;
-  longitude: number;
+  latitude: number | null;
+  longitude: number | null;
 };
 
 type RegionSeed = {
@@ -22,248 +24,49 @@ type RegionSeed = {
   districts: DistrictSeed[];
 };
 
-const ethiopiaRegions: RegionSeed[] = [
-  {
-    name: "Addis Ababa",
-    code: "AA",
-    primaryLanguage: Language.AMHARIC,
-    districts: [
-      { name: "Arada", code: "AA-AR", latitude: 9.0392, longitude: 38.7468 },
-      { name: "Bole", code: "AA-BO", latitude: 8.9985, longitude: 38.7873 },
-      { name: "Yeka", code: "AA-YE", latitude: 9.0301, longitude: 38.8096 },
-      { name: "Lideta", code: "AA-LI", latitude: 9.0234, longitude: 38.7354 },
-    ],
-  },
-  {
-    name: "Dire Dawa",
-    code: "DD",
-    primaryLanguage: Language.AMHARIC,
-    districts: [
-      {
-        name: "Addis Ketema",
-        code: "DD-AK",
-        latitude: 9.5922,
-        longitude: 41.8661,
-      },
-      { name: "Sabian", code: "DD-SA", latitude: 9.6011, longitude: 41.8613 },
-      { name: "Kezira", code: "DD-KE", latitude: 9.5902, longitude: 41.8537 },
-      {
-        name: "Melka Jebdu",
-        code: "DD-MJ",
-        latitude: 9.5788,
-        longitude: 41.8639,
-      },
-    ],
-  },
-  {
-    name: "Afar",
-    code: "AF",
-    primaryLanguage: Language.AMHARIC,
-    districts: [
-      {
-        name: "Awsi Rasu",
-        code: "AF-AR",
-        latitude: 11.5684,
-        longitude: 40.7897,
-      },
-      {
-        name: "Gabi Rasu",
-        code: "AF-GR",
-        latitude: 11.7362,
-        longitude: 41.0851,
-      },
-      {
-        name: "Kilbati Rasu",
-        code: "AF-KR",
-        latitude: 13.2175,
-        longitude: 40.1525,
-      },
-      { name: "Zone 3", code: "AF-Z3", latitude: 10.9942, longitude: 40.1164 },
-    ],
-  },
-  {
-    name: "Amhara",
-    code: "AM",
-    primaryLanguage: Language.AMHARIC,
-    districts: [
-      {
-        name: "Bahir Dar Zuria",
-        code: "AM-BZ",
-        latitude: 11.598,
-        longitude: 37.3832,
-      },
-      {
-        name: "Gondar Zuria",
-        code: "AM-GZ",
-        latitude: 12.603,
-        longitude: 37.4688,
-      },
-      {
-        name: "Dessie Zuria",
-        code: "AM-DZ",
-        latitude: 11.1296,
-        longitude: 39.6279,
-      },
-      {
-        name: "Debre Birhan",
-        code: "AM-DB",
-        latitude: 9.6795,
-        longitude: 39.5326,
-      },
-    ],
-  },
-  {
-    name: "Benishangul-Gumuz",
-    code: "BG",
-    primaryLanguage: Language.AMHARIC,
-    districts: [
-      { name: "Assosa", code: "BG-AS", latitude: 10.0672, longitude: 34.5333 },
-      { name: "Bambasi", code: "BG-BA", latitude: 9.7472, longitude: 34.7281 },
-      { name: "Kamashi", code: "BG-KA", latitude: 9.5317, longitude: 35.8664 },
-      { name: "Metekel", code: "BG-ME", latitude: 11.4088, longitude: 36.1137 },
-    ],
-  },
-  {
-    name: "Central Ethiopia",
-    code: "CE",
-    primaryLanguage: Language.AMHARIC,
-    districts: [
-      { name: "Hossana", code: "CE-HO", latitude: 7.5521, longitude: 37.8497 },
-      { name: "Welkite", code: "CE-WE", latitude: 8.2812, longitude: 37.7764 },
-      { name: "Butajira", code: "CE-BU", latitude: 8.1229, longitude: 38.3698 },
-      { name: "Durame", code: "CE-DU", latitude: 7.2405, longitude: 37.8918 },
-    ],
-  },
-  {
-    name: "Gambela",
-    code: "GA",
-    primaryLanguage: Language.AMHARIC,
-    districts: [
-      {
-        name: "Gambela Town",
-        code: "GA-GT",
-        latitude: 8.2501,
-        longitude: 34.5891,
-      },
-      { name: "Abobo", code: "GA-AB", latitude: 7.8793, longitude: 34.4568 },
-      { name: "Itang", code: "GA-IT", latitude: 8.2142, longitude: 34.2414 },
-      { name: "Lare", code: "GA-LA", latitude: 8.5191, longitude: 34.2783 },
-    ],
-  },
-  {
-    name: "Harari",
-    code: "HA",
-    primaryLanguage: Language.AMHARIC,
-    districts: [
-      {
-        name: "Harar Town",
-        code: "HA-HT",
-        latitude: 9.3126,
-        longitude: 42.1218,
-      },
-      { name: "Amir Nur", code: "HA-AN", latitude: 9.3135, longitude: 42.1272 },
-      { name: "Aboker", code: "HA-AB", latitude: 9.3201, longitude: 42.1138 },
-      { name: "Jinela", code: "HA-JI", latitude: 9.3004, longitude: 42.1365 },
-    ],
-  },
-  {
-    name: "Oromia",
-    code: "OR",
-    primaryLanguage: Language.AMHARIC,
-    districts: [
-      { name: "Adama", code: "OR-AD", latitude: 8.5409, longitude: 39.2689 },
-      { name: "Jimma", code: "OR-JI", latitude: 7.6736, longitude: 36.8344 },
-      { name: "Nekemte", code: "OR-NE", latitude: 9.082, longitude: 36.5554 },
-      {
-        name: "Shashemene",
-        code: "OR-SH",
-        latitude: 7.2001,
-        longitude: 38.5953,
-      },
-      { name: "Bishoftu", code: "OR-BI", latitude: 8.7523, longitude: 38.987 },
-    ],
-  },
-  {
-    name: "Sidama",
-    code: "SI",
-    primaryLanguage: Language.AMHARIC,
-    districts: [
-      { name: "Hawassa", code: "SI-HA", latitude: 7.0504, longitude: 38.4952 },
-      {
-        name: "Aleta Wondo",
-        code: "SI-AW",
-        latitude: 6.9952,
-        longitude: 38.3697,
-      },
-      { name: "Yirgalem", code: "SI-YI", latitude: 6.7595, longitude: 38.4123 },
-      { name: "Dale", code: "SI-DA", latitude: 6.8712, longitude: 38.3224 },
-    ],
-  },
-  {
-    name: "Somali",
-    code: "SO",
-    primaryLanguage: Language.AMHARIC,
-    districts: [
-      { name: "Jigjiga", code: "SO-JI", latitude: 9.3506, longitude: 42.7876 },
-      { name: "Gode", code: "SO-GO", latitude: 5.9491, longitude: 43.5514 },
-      {
-        name: "Kebri Dehar",
-        code: "SO-KD",
-        latitude: 6.7421,
-        longitude: 44.2782,
-      },
-      {
-        name: "Degehabur",
-        code: "SO-DE",
-        latitude: 8.2167,
-        longitude: 43.5667,
-      },
-    ],
-  },
-  {
-    name: "South Ethiopia",
-    code: "SE",
-    primaryLanguage: Language.AMHARIC,
-    districts: [
-      {
-        name: "Arba Minch",
-        code: "SE-AM",
-        latitude: 6.0311,
-        longitude: 37.5517,
-      },
-      { name: "Dilla", code: "SE-DI", latitude: 6.4103, longitude: 38.3072 },
-      { name: "Jinka", code: "SE-JK", latitude: 5.7931, longitude: 36.573 },
-      { name: "Sawla", code: "SE-SA", latitude: 6.3058, longitude: 36.8815 },
-    ],
-  },
-  {
-    name: "South West Ethiopia Peoples'",
-    code: "SW",
-    primaryLanguage: Language.AMHARIC,
-    districts: [
-      { name: "Bonga", code: "SW-BO", latitude: 7.2778, longitude: 36.2342 },
-      {
-        name: "Mizan Teferi",
-        code: "SW-MT",
-        latitude: 6.9987,
-        longitude: 35.5888,
-      },
-      { name: "Tepi", code: "SW-TE", latitude: 7.2002, longitude: 35.45 },
-      { name: "Sheko", code: "SW-SH", latitude: 7.1817, longitude: 35.4386 },
-    ],
-  },
-  {
-    name: "Tigray",
-    code: "TI",
-    primaryLanguage: Language.AMHARIC,
-    districts: [
-      { name: "Mekelle", code: "TI-ME", latitude: 13.4967, longitude: 39.4762 },
-      { name: "Adigrat", code: "TI-AD", latitude: 14.277, longitude: 39.462 },
-      { name: "Axum", code: "TI-AX", latitude: 14.1211, longitude: 38.7234 },
-      { name: "Shire", code: "TI-SH", latitude: 14.1031, longitude: 38.2829 },
-    ],
-  },
-];
+// Build regions/districts dynamically from the real health center seed data
+function slugCode(name: string, max = 4) {
+  return name
+    .replace(/[^a-zA-Z0-9 ]/g, "")
+    .split(/\s+/)
+    .map((w) => w[0] || "")
+    .join("")
+    .slice(0, max)
+    .toUpperCase();
+}
+
+function buildRegionsFromHealthCenter(): RegionSeed[] {
+  const map = new Map<string, { name: string; code: string; primaryLanguage: Language; districts: Map<string, DistrictSeed> }>();
+
+  for (const item of (healthcenter as any[])) {
+    const regionName = (item.Region || "").toString().trim();
+    if (!regionName) continue;
+    const woreda = (item.Woreda || "").toString().trim();
+    const y = Number(item.Y);
+    const x = Number(item.X);
+
+    if (!map.has(regionName)) {
+      map.set(regionName, { name: regionName, code: slugCode(regionName, 4), primaryLanguage: Language.AMHARIC, districts: new Map() });
+    }
+
+    if (woreda) {
+      const region = map.get(regionName)!;
+      if (!region.districts.has(woreda)) {
+        const districtCode = `${region.code}-${slugCode(woreda, 3)}`;
+        region.districts.set(woreda, {
+          name: woreda,
+          code: districtCode,
+          latitude: Number.isFinite(y) && y >= -90 && y <= 90 ? y : null,
+          longitude: Number.isFinite(x) && x >= -180 && x <= 180 ? x : null,
+        });
+      }
+    }
+  }
+
+  return Array.from(map.values()).map((r) => ({ name: r.name, code: r.code, primaryLanguage: r.primaryLanguage, districts: Array.from(r.districts.values()) }));
+}
+
+const ethiopiaRegions: RegionSeed[] = buildRegionsFromHealthCenter();
 
 async function seedRegionsAndDistricts() {
   for (const region of ethiopiaRegions) {
@@ -310,8 +113,8 @@ async function seedRegionsAndDistricts() {
           data: {
             name: district.name,
             regionId: savedRegion.id,
-            latitude: district.latitude,
-            longitude: district.longitude,
+            latitude: district.latitude ?? null,
+            longitude: district.longitude ?? null,
           },
         });
         continue;
@@ -322,8 +125,8 @@ async function seedRegionsAndDistricts() {
           where: { id: existingDistrictByRegionAndName.id },
           data: {
             code: district.code,
-            latitude: district.latitude,
-            longitude: district.longitude,
+            latitude: district.latitude ?? null,
+            longitude: district.longitude ?? null,
           },
         });
         continue;
@@ -334,8 +137,8 @@ async function seedRegionsAndDistricts() {
           name: district.name,
           code: district.code,
           regionId: savedRegion.id,
-          latitude: district.latitude,
-          longitude: district.longitude,
+          latitude: district.latitude ?? null,
+          longitude: district.longitude ?? null,
         },
       });
     }
@@ -587,6 +390,9 @@ async function main() {
 
   await seedUsers();
   console.log("✅ Seeded Admin and HEW users");
+
+  await seedHealthCenters();
+  console.log("✅ Seeded health facilities from real data");
 
   await seedReports();
   console.log("✅ Seeded sample disease reports");

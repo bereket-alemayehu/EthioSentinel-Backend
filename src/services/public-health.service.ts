@@ -143,7 +143,20 @@ export class PublicHealthService {
     since.setUTCDate(since.getUTCDate() - windowDays);
 
     const regions = await prisma.region.findMany({
-      include: { districts: true },
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        districts: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            latitude: true,
+            longitude: true,
+          },
+        },
+      },
       orderBy: { name: "asc" },
     });
     const districtToRegion = new Map<string, string>();
