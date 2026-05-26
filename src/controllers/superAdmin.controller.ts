@@ -109,6 +109,7 @@ export class SuperAdminController {
       role?: string;
       region?: string;
       assignedDistrict?: string | null;
+      healthFacilityId?: number | null;
       phoneNumber?: string | null;
       isActive?: boolean;
     };
@@ -128,6 +129,7 @@ export class SuperAdminController {
         role,
         region: String(body.region ?? ""),
         assignedDistrict: body.assignedDistrict,
+        healthFacilityId: body.healthFacilityId,
         phoneNumber: body.phoneNumber,
         isActive: body.isActive,
       },

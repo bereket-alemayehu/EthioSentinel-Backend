@@ -296,9 +296,33 @@ export class AdvisoryService {
       where: {
         status: AdvisoryStatus.APPROVED,
       },
-      include: {
-        region: true,
-        district: true,
+      select: {
+        id: true,
+        title: true,
+        content: true,
+        diseaseType: true,
+        riskLevel: true,
+        language: true,
+        status: true,
+        regionId: true,
+        districtId: true,
+        createdAt: true,
+        updatedAt: true,
+        approvedAt: true,
+        region: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+          },
+        },
+        district: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+          },
+        },
         approvedBy: {
           select: {
             id: true,
@@ -346,9 +370,33 @@ export class AdvisoryService {
     const [advisories, total] = await Promise.all([
       prisma.advisory.findMany({
         where: { status },
-        include: {
-          region: true,
-          district: true,
+        select: {
+          id: true,
+          title: true,
+          content: true,
+          diseaseType: true,
+          riskLevel: true,
+          language: true,
+          status: true,
+          regionId: true,
+          districtId: true,
+          createdAt: true,
+          updatedAt: true,
+          approvedAt: true,
+          region: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+            },
+          },
+          district: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+            },
+          },
           sourceReport: {
             select: { id: true, diseaseType: true, district: true, timestamp: true },
           },
