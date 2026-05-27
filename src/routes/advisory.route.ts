@@ -36,6 +36,12 @@ router.get(
   AdvisoryController.getApprovedAdvisories,
 );
 
+router.get(
+  "/:id",
+  authenticate,
+  AdvisoryController.getAdvisoryById,
+);
+
 router.post(
   "/",
   authenticate,

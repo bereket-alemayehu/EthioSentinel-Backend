@@ -42,6 +42,12 @@ export class AdvisoryController {
     },
   );
 
+  static getAdvisoryById = catchAsync(async (req: Request, res: Response) => {
+    const advisoryId = String(req.params.id);
+    const advisory = await AdvisoryService.getAdvisoryById(advisoryId);
+    return sendSuccess(res, advisory, "Advisory retrieved successfully");
+  });
+
   static getAllAdvisories = catchAsync(async (req: Request, res: Response) => {
     const advisories = await AdvisoryService.getAllAdvisories();
     return sendSuccess(res, advisories, "Advisories retrieved successfully");

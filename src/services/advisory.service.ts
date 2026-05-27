@@ -269,6 +269,35 @@ export class AdvisoryService {
     };
   }
 
+  static async getAdvisoryById(id: string) {
+    if (!id) {
+      throw new AppError("Invalid advisory id", 400);
+    }
+    const advisory = await prisma.advisory.findUnique({
+      where: { id },
+      include: {
+        region: {
+          select: { id: true, name: true, code: true },
+        },
+        district: {
+          select: { id: true, name: true, code: true },
+        },
+        sourceReport: {
+          select: { id: true, diseaseType: true, district: true, timestamp: true },
+        },
+        approvedBy: {
+          select: { id: true, username: true, email: true },
+        },
+      },
+    });
+
+    if (!advisory) {
+      throw new AppError("Advisory not found", 404);
+    }
+
+    return advisory;
+  }
+
   static async getAllAdvisories() {
     return prisma.advisory.findMany({
       where: {

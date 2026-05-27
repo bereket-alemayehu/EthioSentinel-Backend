@@ -12,7 +12,7 @@ const VALID_CHANNELS = ["WEB", "SMS", "USSD", "EMAIL"] as const;
 type AlertSeverityValue = (typeof VALID_SEVERITIES)[number];
 type AlertChannelValue = (typeof VALID_CHANNELS)[number];
 
-type AlertWorkflowStatus = "Draft" | "Approved";
+type AlertWorkflowStatus = "Pending" | "Active" | "Rejected";
 
 type AlertManagementView = {
   id: string;
@@ -44,6 +44,8 @@ export class AlertService {
     channel: string;
     message: string;
     isDelivered: boolean;
+    deliveryCount: number;
+    failedCount: number;
     targetZone: string;
     aiSuggested: boolean;
     sourceReportId: string | null;
@@ -57,7 +59,12 @@ export class AlertService {
       severity: alert.severity,
       channelString: alert.channel,
       advisory: alert.advisory?.content ?? alert.message,
-      status: alert.isDelivered ? "Approved" : "Draft",
+      status:
+        alert.deliveryCount < 0 || alert.failedCount < 0
+          ? "Rejected"
+          : alert.isDelivered
+            ? "Active"
+            : "Pending",
       targetZone: alert.targetZone,
       isDelivered: alert.isDelivered,
       aiSuggested: alert.aiSuggested,
@@ -187,14 +194,21 @@ export class AlertService {
     });
   }
 
-  static async getAllAlerts(filters?: { aiSuggested?: boolean }) {
-    const where =
-      typeof filters?.aiSuggested === "boolean"
-        ? { aiSuggested: filters.aiSuggested }
-        : undefined;
+  static async getAllAlerts(filters?: { aiSuggested?: boolean; pending?: boolean }) {
+    const where: Record<string, unknown> = {};
+
+    if (typeof filters?.aiSuggested === "boolean") {
+      where.aiSuggested = filters.aiSuggested;
+    }
+
+    if (filters?.pending === true) {
+      where.isDelivered = false;
+      where.deliveryCount = { gte: 0 };
+      where.failedCount = { gte: 0 };
+    }
 
     const alerts = await prisma.alert.findMany({
-      where,
+      where: Object.keys(where).length > 0 ? where : undefined,
       include: {
         disease: true,
         advisory: true,
@@ -205,6 +219,26 @@ export class AlertService {
     });
 
     return alerts.map((alert) => this.toAlertManagementView(alert));
+  }
+
+  static async getAlertById(alertId: string) {
+    if (!alertId) {
+      throw new AppError("Invalid alert id", 400);
+    }
+
+    const alert = await prisma.alert.findUnique({
+      where: { id: alertId },
+      include: {
+        disease: true,
+        advisory: true,
+      },
+    });
+
+    if (!alert) {
+      throw new AppError("Alert not found", 404);
+    }
+
+    return this.toAlertManagementView(alert);
   }
 
   static async approveAlert(alertId: string, approverUserId: string) {
@@ -284,8 +318,8 @@ export class AlertService {
       where: { id: alertId },
       data: {
         isDelivered: false,
-        deliveryCount: 0,
-        failedCount: 0,
+        deliveryCount: -1,
+        failedCount: -1,
       },
       include: {
         disease: true,
@@ -368,13 +402,17 @@ export class AlertService {
         message,
         severity: parsedSeverity,
         channel: parsedChannel,
-        isDelivered: isDelivered ?? false,
+        isDelivered: isDelivered ?? !aiSuggested,
       },
       include: {
         disease: true,
         advisory: true,
       },
     });
+
+    if (alert.isDelivered) {
+      void this.triggerApprovalNotification(alert);
+    }
 
     return this.toAlertManagementView(alert);
   }
@@ -430,7 +468,9 @@ export class AlertService {
       take: cap,
     });
 
-    return alerts.map((a) => ({
+    const visibleAlerts = isPrivileged ? alerts : alerts.filter((a) => a.isDelivered);
+
+    return visibleAlerts.map((a) => ({
       id: a.id,
       title: a.title,
       message: a.message,
