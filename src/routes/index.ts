@@ -13,11 +13,13 @@ import aiRoutes from "./ai.route";
 import analyticsRoutes from "./analytics.route";
 import searchRoutes from "./search.route";
 import publicHealthRoutes from "./public-health.route";
+import configRoutes from "./config.route";
 import swaggerRoutes from "./swagger/swagger.config";
 
 const router = Router();
 
 router.use("/docs", swaggerRoutes);
+router.use("/config", configRoutes);
 router.use("/auth", authRoutes);
 router.use("/search", searchRoutes);
 router.use("/users", userRoutes);

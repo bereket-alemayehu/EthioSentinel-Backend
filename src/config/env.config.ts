@@ -8,7 +8,7 @@ export const env = cleanEnv(process.env, {
     choices: ["development", "test", "production"],
     default: "development",
   }),
-  PORT: port({ default: 3000 }),
+  PORT: port({ default: 5001 }),
   DATABASE_URL: str(),
   JWT_SECRET: str(),
   JWT_ACCESS_SECRET: str({ default: "" }), // Fallback logic will be in token.util or here
@@ -24,6 +24,8 @@ export const env = cleanEnv(process.env, {
   SMTP_PASS: str({ default: "" }),
   SMTP_FROM: str({ default: "noreply@ethiosentinel.local" }),
   BREVO_API_KEY: str({ default: "" }),
+  /** Brevo SMTP tab login (required when BREVO_API_KEY is xsmtpsib-…). */
+  BREVO_SMTP_LOGIN: str({ default: "" }),
   BREVO_SENDER_EMAIL: str({ default: "" }),
   EMAIL_FROM: str({ default: "" }),
   EMAIL_USER: str({ default: "" }),
@@ -44,5 +46,8 @@ export const env = cleanEnv(process.env, {
   TWILIO_ACCOUNT_SID: str({ default: "" }),
   TWILIO_AUTH_TOKEN: str({ default: "" }),
   TWILIO_MESSAGING_SERVICE_SID: str({ default: "" }),
-  SITESECRET: str({ desc: "Google reCAPTCHA secret key" }),
+  /** Google reCAPTCHA v2 secret (server-side verify). */
+  SITESECRET: str({ default: "", desc: "Google reCAPTCHA secret key" }),
+  /** Google reCAPTCHA v2 site key (browser widget). Pair with SITESECRET. */
+  RECAPTCHA_SITE_KEY: str({ default: "", desc: "Google reCAPTCHA site key for frontend" }),
 });

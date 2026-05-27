@@ -453,19 +453,31 @@ Affected Area:
     }
 
     const severity = this.getSeverityFromZScore(input.zScore);
-    const z =
-      typeof input.zScore === "number" ? input.zScore.toFixed(2) : "unknown";
+    const message = buildCitizenAlertMessage({
+      diseaseType: input.diseaseType,
+      district: input.district,
+      currentCases: input.currentCases,
+      historicalMean: input.historicalMean,
+    });
+    const adminSummary = buildAdminSpikeSummary({
+      diseaseType: input.diseaseType,
+      district: input.district,
+      currentCases: input.currentCases,
+      historicalMean: input.historicalMean,
+      zScore: input.zScore,
+    });
 
-    const message =
-      `AI detected a potential ${input.diseaseType} spike in ${input.district}. ` +
-      `Current cases: ${input.currentCases}, baseline mean: ${input.historicalMean.toFixed(2)}, z-score: ${z}. ` +
-      `An AI-generated advisory draft is ready for ADMIN review and approval.`;
+    const diseaseRow = await prisma.disease.findFirst({
+      where: { name: { equals: input.diseaseType, mode: "insensitive" } },
+      select: { id: true },
+    });
 
     const createdAlert = await prisma.alert.create({
       data: {
         targetZone: input.district,
-        title: `AI Spike Alert: ${input.diseaseType} in ${input.district}`,
+        title: buildCitizenAlertTitle(input.diseaseType, input.district),
         message,
+        diseaseId: diseaseRow?.id,
         severity,
         channel: "EMAIL",
         isDelivered: false,
@@ -476,8 +488,19 @@ Affected Area:
       select: { id: true },
     });
 
+    let aiAdvisoryDraft: string | undefined;
+    if (input.advisoryDraftId) {
+      const draft = await prisma.advisory.findUnique({
+        where: { id: input.advisoryDraftId },
+        select: { title: true, content: true },
+      });
+      if (draft) {
+        aiAdvisoryDraft = `${draft.title}\n\n${draft.content}`;
+      }
+    }
+
     const admins = await prisma.user.findMany({
-      where: { role: "ADMIN", isActive: true },
+      where: { role: { in: ["ADMIN", "SUPER_ADMIN"] }, isActive: true },
       select: { email: true },
     });
 
@@ -485,7 +508,7 @@ Affected Area:
       .map((u: { email: string | null }) => u.email)
       .filter(Boolean) as string[];
     emails.push(...EmailSender.parseConfiguredAlertRecipients());
-    const emailResult = await EmailSender.sendBulkSpikeAlertEmails(emails, {
+    const emailResult = await EmailSender.sendBulkSpikeAlertEmails([...new Set(emails)], {
       disease: input.diseaseType,
       location: input.district,
       currentCases: input.currentCases,
@@ -493,11 +516,8 @@ Affected Area:
       expectedCases: input.historicalMean,
       zScore: input.zScore,
       severity,
-      summary:
-        `${message}` +
-        (input.advisoryDraftId
-          ? ` Draft advisory id: ${input.advisoryDraftId}`
-          : ""),
+      summary: adminSummary,
+      aiAdvisoryDraft,
     });
 
     await prisma.alert.update({
@@ -508,29 +528,7 @@ Affected Area:
       },
     });
 
-    // Notify Citizens in the affected district via SMS
-    const citizensInDistrict = await prisma.user.findMany({
-      where: {
-        role: "CITIZEN",
-        assignedDistrict: input.district,
-        isActive: true,
-        phoneNumber: { not: null },
-      },
-      select: { phoneNumber: true },
-    });
-
-    const citizenPhoneNumbers = citizensInDistrict
-      .map((u) => u.phoneNumber)
-      .filter(Boolean) as string[];
-
-    const smsBody = `EthioSentinel Alert: A potential ${input.diseaseType} outbreak has been detected in your area (${input.district}). Please stay tuned for advisories and take necessary precautions.`;
-    
-    let smsResult = { delivered: 0, failed: 0 };
-    if (citizenPhoneNumbers.length > 0) {
-      smsResult = await SmsSender.sendBulkSms(citizenPhoneNumbers, smsBody);
-    }
-
-    Logger.warn("AI anomaly admin and citizen notification created", {
+    Logger.warn("AI anomaly admin notification created (awaiting approval before public SMS)", {
       reportId: input.reportId,
       alertId: createdAlert.id,
       advisoryDraftId: input.advisoryDraftId ?? null,
@@ -539,8 +537,6 @@ Affected Area:
       severity,
       emailsDelivered: emailResult.delivered,
       emailsFailed: emailResult.failed,
-      smsDelivered: smsResult.delivered,
-      smsFailed: smsResult.failed,
     });
 
     return createdAlert.id;
@@ -564,16 +560,20 @@ Affected Area:
         : this.getSeverityFromZScore(input.zScore);
     const oneDayAgo = new Date();
     oneDayAgo.setUTCDate(oneDayAgo.getUTCDate() - 1);
-    const title = `Unusual Spike: ${input.diseaseType} in ${input.district}`;
-    const z =
-      typeof input.zScore === "number" ? input.zScore.toFixed(2) : "unknown";
-    const message =
-      `Unusual ${input.diseaseType} increase detected in ${input.district}. ` +
-      `Current cases: ${input.currentCases}; usual recent level: ${input.expectedCases.toFixed(1)}; z-score: ${z}. ` +
-      (typeof input.currentDeaths === "number" && input.currentDeaths > 0
-        ? `Deaths reported: ${input.currentDeaths}; mortality rate: ${((input.mortalityRate ?? 0) * 100).toFixed(1)}%. `
-        : "") +
-      `Source: ${input.source}. Please review in the admin dashboard.`;
+    const title = buildCitizenAlertTitle(input.diseaseType, input.district);
+    const message = buildCitizenAlertMessage({
+      diseaseType: input.diseaseType,
+      district: input.district,
+      currentCases: input.currentCases,
+      historicalMean: input.expectedCases,
+    });
+    const adminSummary = buildAdminSpikeSummary({
+      diseaseType: input.diseaseType,
+      district: input.district,
+      currentCases: input.currentCases,
+      historicalMean: input.expectedCases,
+      zScore: input.zScore,
+    });
 
     const existingAlert = await prisma.alert.findFirst({
       where: {
@@ -595,6 +595,11 @@ Affected Area:
       return existingAlert.id;
     }
 
+    const diseaseRow = await prisma.disease.findFirst({
+      where: { name: { equals: input.diseaseType, mode: "insensitive" } },
+      select: { id: true },
+    });
+
     const createdAlert = await prisma.alert.create({
       data: {
         targetZone: input.district,
@@ -604,18 +609,23 @@ Affected Area:
         channel: "EMAIL",
         isDelivered: false,
         aiSuggested: true,
+        diseaseId: diseaseRow?.id,
       },
       select: { id: true },
     });
 
     const admins = await prisma.user.findMany({
-      where: { role: "ADMIN", isActive: true },
+      where: { role: { in: ["ADMIN", "SUPER_ADMIN"] }, isActive: true },
       select: { email: true },
     });
-    const emails = admins
-      .map((u: { email: string | null }) => u.email)
-      .filter(Boolean) as string[];
-    emails.push(...EmailSender.parseConfiguredAlertRecipients());
+    const emails = [
+      ...new Set([
+        ...(admins
+          .map((u: { email: string | null }) => u.email)
+          .filter(Boolean) as string[]),
+        ...EmailSender.parseConfiguredAlertRecipients(),
+      ]),
+    ];
 
     const emailResult = await EmailSender.sendBulkSpikeAlertEmails(emails, {
       disease: input.diseaseType,
@@ -626,7 +636,7 @@ Affected Area:
       expectedCases: input.expectedCases,
       zScore: input.zScore,
       severity,
-      summary: message,
+      summary: adminSummary,
     });
 
     await prisma.alert.update({
@@ -928,20 +938,9 @@ Affected Area:
       classification = "ANOMALY";
     }
 
+    // Manual analysis never creates alerts or sends admin emails — only registered
+    // report ingestion (automatic Z-score / mortality checks) triggers those.
     let signalId: string | undefined;
-    let alertId: string | undefined;
-    if (classification === "ANOMALY") {
-      alertId = await this.createSpikeAlertAndEmailAdmins({
-        diseaseType: input.diseaseType,
-        district: input.district,
-        currentCases,
-        currentDeaths,
-        mortalityRate,
-        expectedCases: payload.historical_mean,
-        zScore,
-        source: "MANUAL_ANALYSIS",
-      });
-    }
 
     if (input.persist) {
       const persisted = await this.persistAnomalySignal({
@@ -952,7 +951,6 @@ Affected Area:
         sampleSize: stats.sampleSize,
         lookbackStart,
         lookbackEnd,
-        alertId,
         manual: true,
         notes: input.notes,
       });

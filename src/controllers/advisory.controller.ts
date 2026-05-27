@@ -53,6 +53,12 @@ export class AdvisoryController {
     return sendSuccess(res, advisories, "Advisories retrieved successfully");
   });
 
+  static getAdvisoryById = catchAsync(async (req: Request, res: Response) => {
+    const advisoryId = String(req.params.id);
+    const advisory = await AdvisoryService.getAdvisoryById(advisoryId);
+    return sendSuccess(res, advisory, "Advisory retrieved successfully");
+  });
+
   static getDraftAdvisories = catchAsync(async (req: Request, res: Response) => {
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));

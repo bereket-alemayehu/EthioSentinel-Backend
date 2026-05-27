@@ -38,16 +38,33 @@ export class SmsService {
     const formattedTo = this.formatPhoneNumber(to);
     const client = this.getClient();
     if (!client) {
-      Logger.warn("Twilio not configured; skipping SMS delivery", { to: formattedTo, body });
+      if (env.NODE_ENV !== "production" && body.includes("verification code")) {
+        const match = body.match(/(\d{6})/);
+        Logger.warn(
+          `[DEV] SMS OTP for ${formattedTo}: ${match?.[1] ?? "(see body)"}`,
+        );
+      } else {
+        Logger.warn("Twilio not configured; skipping SMS delivery", {
+          to: formattedTo,
+          body,
+        });
+      }
       return null;
     }
 
     try {
       const sid = env.TWILIO_MESSAGING_SERVICE_SID?.trim();
       if (!sid) {
-        Logger.warn("TWILIO_MESSAGING_SERVICE_SID not set; skipping SMS delivery", {
-          to: formattedTo,
-        });
+        if (env.NODE_ENV !== "production" && body.includes("verification code")) {
+          const match = body.match(/(\d{6})/);
+          Logger.warn(
+            `[DEV] SMS OTP for ${formattedTo}: ${match?.[1] ?? "(see body)"}`,
+          );
+        } else {
+          Logger.warn("TWILIO_MESSAGING_SERVICE_SID not set; skipping SMS delivery", {
+            to: formattedTo,
+          });
+        }
         return null;
       }
       // Messaging Service SIDs start with MG and must use messagingServiceSid, not `from`.

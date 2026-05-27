@@ -4,6 +4,12 @@ import { catchAsync } from "../utils/catchAsync";
 import { sendSuccess } from "../utils/response.util";
 
 export class AlertController {
+  static getAlertById = catchAsync(async (req: Request, res: Response) => {
+    const alertId = String(req.params.id);
+    const alert = await AlertService.getAlertById(alertId);
+    return sendSuccess(res, alert, "Alert retrieved successfully");
+  });
+
   static getAllAlerts = catchAsync(async (req: Request, res: Response) => {
     const aiSuggestedRaw = req.query.aiSuggested;
     const pendingRaw = req.query.pending;

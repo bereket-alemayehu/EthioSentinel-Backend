@@ -17,8 +17,21 @@ export class AuthController {
       throw new AppError("reCAPTCHA verification failed. Please try again.", 400);
     }
 
-    const user = await AuthService.register(registerData);
-    return sendSuccess(res, { user }, "Account created successfully! Please check your email or phone for the verification code.", 201);
+    const { user, otpDelivery, otpChannel } = await AuthService.register(registerData);
+    const message = AuthService.buildOtpDeliveryMessage(otpDelivery, {
+      email: user.email,
+      phoneNumber: user.phoneNumber,
+    });
+    const devOtpCode =
+      process.env.NODE_ENV !== "production" && otpDelivery.devConsoleOnly
+        ? await AuthService.getDevOtpForUser(user.id)
+        : undefined;
+    return sendSuccess(
+      res,
+      { user, otpDelivery, otpChannel, ...(devOtpCode ? { devOtpCode } : {}) },
+      message,
+      201,
+    );
   });
 
   static verifyOtp = catchAsync(async (req: Request, res: Response) => {
@@ -39,20 +52,57 @@ export class AuthController {
   });
 
   static resendOtp = catchAsync(async (req: Request, res: Response) => {
-    const { userId } = req.body;
-    await AuthService.resendVerificationOtp(userId);
-    return sendSuccess(res, null, "A new verification code has been sent to your primary contact method.");
+    const { userId, otpChannel } = req.body;
+    const channel = otpChannel === "sms" ? "sms" : "email";
+    const { otpDelivery, email, phoneNumber } =
+      await AuthService.resendVerificationOtp(userId, channel);
+    const message = AuthService.buildOtpDeliveryMessage(otpDelivery, {
+      email,
+      phoneNumber,
+    });
+    const devOtpCode =
+      process.env.NODE_ENV !== "production" && otpDelivery.devConsoleOnly
+        ? await AuthService.getDevOtpForUser(userId)
+        : undefined;
+    return sendSuccess(
+      res,
+      { otpDelivery, ...(devOtpCode ? { devOtpCode } : {}) },
+      message,
+    );
   });
 
   static forgotPassword = catchAsync(async (req: Request, res: Response) => {
-    const { phoneNumber } = req.body;
-    await AuthService.forgotPassword(phoneNumber);
-    return sendSuccess(res, null, "If an account exists, a recovery code has been sent to your registered email or phone.");
+    const { identifier, phoneNumber, otpChannel } = req.body;
+    const id = String(identifier ?? phoneNumber ?? "").trim();
+    if (!id) {
+      throw new AppError("Email or phone number is required", 400);
+    }
+    const channel = otpChannel === "sms" ? "sms" : otpChannel === "email" ? "email" : undefined;
+    const result = await AuthService.forgotPassword(id, channel);
+    const message = AuthService.buildOtpDeliveryMessage(result.otpDelivery, {
+      email: result.email ?? null,
+      phoneNumber: result.phoneNumber ?? null,
+    });
+    return sendSuccess(
+      res,
+      {
+        otpDelivery: result.otpDelivery,
+        otpChannel: result.otpChannel,
+        ...(result.devOtpCode ? { devOtpCode: result.devOtpCode } : {}),
+      },
+      result.otpDelivery.email || result.otpDelivery.sms
+        ? message
+        : "If an account exists, a recovery code has been sent.",
+    );
   });
 
   static resetPassword = catchAsync(async (req: Request, res: Response) => {
-    const { phoneNumber, otpCode, newPassword } = req.body;
-    await AuthService.resetPassword(phoneNumber, otpCode, newPassword);
+    const { identifier, phoneNumber, otpCode, newPassword } = req.body;
+    const id = String(identifier ?? phoneNumber ?? "").trim();
+    if (!id) {
+      throw new AppError("Email or phone number is required", 400);
+    }
+    await AuthService.resetPassword(id, otpCode, newPassword);
     return sendSuccess(res, null, "Password has been successfully reset");
   });
 

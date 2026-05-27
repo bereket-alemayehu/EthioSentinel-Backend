@@ -5,6 +5,7 @@ import {
 } from "@prisma/client";
 import { AppError } from "../utils/AppError";
 import { AuditService } from "./audit.service";
+import { enrichCitizenAdvisoryContent } from "../utils/healthMessaging";
 
 type SupportedLanguage = "ENGLISH" | "AMHARIC";
 
@@ -299,7 +300,7 @@ export class AdvisoryService {
   }
 
   static async getAllAdvisories() {
-    return prisma.advisory.findMany({
+    const rows = await prisma.advisory.findMany({
       where: {
         status: AdvisoryStatus.APPROVED,
       },
@@ -342,6 +343,33 @@ export class AdvisoryService {
         createdAt: "desc",
       },
     });
+    return rows.map((row) => this.withPublicAdvisoryContent(row));
+  }
+
+  static async getAdvisoryById(advisoryId: string) {
+    if (!advisoryId) {
+      throw new AppError("Invalid advisory id", 400);
+    }
+
+    const advisory = await prisma.advisory.findUnique({
+      where: { id: advisoryId },
+      include: {
+        region: true,
+        district: true,
+        sourceReport: {
+          select: { id: true, diseaseType: true, district: true, timestamp: true },
+        },
+        approvedBy: {
+          select: { id: true, username: true, email: true },
+        },
+      },
+    });
+
+    if (!advisory) {
+      throw new AppError("Advisory not found", 404);
+    }
+
+    return advisory;
   }
 
   static async getAdvisoriesByStatus(status: AdvisoryStatus, page = 1, limit = 20) {
