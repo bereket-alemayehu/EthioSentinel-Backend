@@ -473,9 +473,9 @@ export class AnalyticsService {
         : {}),
     };
 
-    // Aggregate by district name and diseaseType
+    // Aggregate by district, diseaseType, and healthFacilityId
     const grouped = await prisma.diseaseReport.groupBy({
-      by: ["district", "diseaseType"],
+      by: ["district", "diseaseType", "healthFacilityId"],
       where,
       _sum: { caseCount: true, deathCount: true },
       _count: { id: true },
@@ -496,16 +496,57 @@ export class AnalyticsService {
 
     const districtMap = new Map(districts.map((d) => [d.name, d]));
 
+    // Fetch health facility coordinates & names
+    const facilityIds = Array.from(
+      new Set(
+        grouped
+          .map((g) => g.healthFacilityId)
+          .filter((id): id is number => id !== null),
+      ),
+    );
+
+    const facilities = await prisma.healthFacility.findMany({
+      where: {
+        id: { in: facilityIds },
+      },
+      select: {
+        id: true,
+        HF_Name: true,
+        X: true,
+        Y: true,
+      },
+    });
+
+    const facilityMap = new Map(facilities.map((f) => [f.id, f]));
+
     return grouped.map((group) => {
-      const geo = districtMap.get(group.district);
+      let latitude: number | null = null;
+      let longitude: number | null = null;
+      let healthFacilityName: string | null = null;
+
+      if (group.healthFacilityId && facilityMap.has(group.healthFacilityId)) {
+        const facility = facilityMap.get(group.healthFacilityId)!;
+        latitude = facility.Y ? Number(facility.Y) : null;
+        longitude = facility.X ? Number(facility.X) : null;
+        healthFacilityName = facility.HF_Name;
+      }
+
+      // If health facility has no valid coordinates, or report has no health facility, fall back to district coordinates
+      if (latitude === null || longitude === null) {
+        const geo = districtMap.get(group.district);
+        latitude = geo?.latitude ? Number(geo.latitude) : null;
+        longitude = geo?.longitude ? Number(geo.longitude) : null;
+      }
+
       return {
         district: group.district,
         diseaseType: group.diseaseType,
         totalCases: group._sum.caseCount ?? 0,
         totalDeaths: group._sum.deathCount ?? 0,
         reportCount: group._count.id,
-        latitude: geo?.latitude ? Number(geo.latitude) : null,
-        longitude: geo?.longitude ? Number(geo.longitude) : null,
+        latitude,
+        longitude,
+        healthFacilityName,
       };
     });
   }

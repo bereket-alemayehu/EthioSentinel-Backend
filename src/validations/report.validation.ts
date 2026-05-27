@@ -12,6 +12,7 @@ type ReportInput = {
   timestamp?: unknown;
   notes?: unknown;
   isOfflineCached?: unknown;
+  healthFacilityId?: unknown;
 };
 
 type ValidatedReportInput = {
@@ -23,6 +24,7 @@ type ValidatedReportInput = {
   timestamp: Date | undefined;
   notes: string | undefined;
   isOfflineCached: boolean;
+  healthFacilityId: number | undefined;
 };
 
 /**
@@ -86,6 +88,7 @@ export function validateAndSanitizeReport(
 
   const isOfflineCached = Boolean(input.isOfflineCached ?? false);
   const diseaseId = input.diseaseId ? Number(input.diseaseId) : undefined;
+  const healthFacilityId = input.healthFacilityId ? Number(input.healthFacilityId) : undefined;
 
-  return { district, diseaseType, diseaseId, caseCount, deathCount, timestamp, notes, isOfflineCached };
+  return { district, diseaseType, diseaseId, caseCount, deathCount, timestamp, notes, isOfflineCached, healthFacilityId };
 }
