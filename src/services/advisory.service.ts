@@ -270,33 +270,18 @@ export class AdvisoryService {
     };
   }
 
-  static async getAdvisoryById(id: string) {
-    if (!id) {
-      throw new AppError("Invalid advisory id", 400);
-    }
-    const advisory = await prisma.advisory.findUnique({
-      where: { id },
-      include: {
-        region: {
-          select: { id: true, name: true, code: true },
-        },
-        district: {
-          select: { id: true, name: true, code: true },
-        },
-        sourceReport: {
-          select: { id: true, diseaseType: true, district: true, timestamp: true },
-        },
-        approvedBy: {
-          select: { id: true, username: true, email: true },
-        },
-      },
-    });
 
-    if (!advisory) {
-      throw new AppError("Advisory not found", 404);
-    }
-
-    return advisory;
+  private static withPublicAdvisoryContent<T extends { content: string; diseaseType: string; riskLevel: string; district?: { name: string } | null }>(
+    row: T,
+  ): T & { publicContent: string } {
+    return {
+      ...row,
+      publicContent: enrichCitizenAdvisoryContent(row.content, {
+        diseaseType: row.diseaseType,
+        district: row.district?.name ?? "your area",
+        riskLevel: row.riskLevel,
+      }),
+    };
   }
 
   static async getAllAdvisories() {
@@ -370,6 +355,37 @@ export class AdvisoryService {
     }
 
     return advisory;
+  }
+
+  static async getAdvisoriesByDisease(diseaseId: string) {
+    const disease = await prisma.disease.findUnique({
+      where: { id: Number(diseaseId) },
+      select: { name: true },
+    });
+
+    if (!disease) {
+      throw new AppError("Disease not found", 404);
+    }
+
+    return prisma.advisory.findMany({
+      where: {
+        diseaseType: { equals: disease.name, mode: "insensitive" },
+        status: AdvisoryStatus.APPROVED,
+      },
+      select: {
+        id: true,
+        title: true,
+        content: true,
+        diseaseType: true,
+        riskLevel: true,
+        language: true,
+        status: true,
+        createdAt: true,
+        region: { select: { id: true, name: true, code: true } },
+        district: { select: { id: true, name: true, code: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
   }
 
   static async getAdvisoriesByStatus(status: AdvisoryStatus, page = 1, limit = 20) {

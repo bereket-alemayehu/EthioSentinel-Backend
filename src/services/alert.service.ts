@@ -92,8 +92,10 @@ export class AlertService {
       message: sanitizePublicHealthText(alert.message) || alert.message,
       disease: diseaseLabel,
       severity: alert.severity,
-      channelString: alert.channel,
+      channel: alert.channel,
       advisory: alert.advisory?.content ?? alert.message,
+      advisoryId: alert.advisory?.id ?? null,
+      advisoryTitle: alert.advisory?.title ?? null,
       status:
         alert.deliveryCount < 0 || alert.failedCount < 0
           ? "Rejected"
