@@ -5,7 +5,14 @@ import {
 } from "@prisma/client";
 import { AppError } from "../utils/AppError";
 import { AuditService } from "./audit.service";
-import { enrichCitizenAdvisoryContent } from "../utils/healthMessaging";
+import {
+  buildCitizenSmsAlert,
+  enrichCitizenAdvisoryContent,
+  sanitizePublicHealthText,
+} from "../utils/healthMessaging";
+import { EmailSender } from "../utils/EmailSender";
+import { SmsSender } from "../utils/SmsSender";
+import Logger from "../utils/logger";
 
 type SupportedLanguage = "ENGLISH" | "AMHARIC";
 
@@ -42,6 +49,121 @@ type SymptomCheckerResult = {
 };
 
 export class AdvisoryService {
+  private static async notifyCitizensOnAdvisoryApproval(input: {
+    advisoryId: string;
+    diseaseType: string;
+    title: string;
+    content: string;
+    riskLevel: string;
+    districtName: string | null;
+    regionName: string;
+  }) {
+    const targetLocation = input.districtName ?? input.regionName;
+    const where = input.districtName
+      ? {
+          role: "CITIZEN" as const,
+          isActive: true,
+          OR: [
+            {
+              assignedDistrict: {
+                equals: input.districtName,
+                mode: "insensitive" as const,
+              },
+            },
+            // Fallback to region if district not set
+            {
+              AND: [
+                {
+                  assignedDistrict: null,
+                },
+                {
+                  region: {
+                    equals: input.regionName,
+                    mode: "insensitive" as const,
+                  },
+                },
+              ],
+            },
+          ],
+        }
+      : {
+          role: "CITIZEN" as const,
+          isActive: true,
+          region: {
+            equals: input.regionName,
+            mode: "insensitive" as const,
+          },
+        };
+
+    const citizens = await prisma.user.findMany({
+      where,
+      select: {
+        id: true,
+        email: true,
+        phoneNumber: true,
+      },
+    });
+
+    if (citizens.length === 0) {
+      Logger.info("No citizens found for approved advisory notification", {
+        advisoryId: input.advisoryId,
+        location: targetLocation,
+        queryDistrict: input.districtName,
+        queryRegion: input.regionName,
+      });
+      return { emailDelivered: 0, emailFailed: 0, smsDelivered: 0, smsFailed: 0 };
+    }
+
+    const emailRecipients = citizens
+      .map((citizen) => citizen.email?.trim())
+      .filter((email): email is string => Boolean(email));
+
+    const smsRecipients = citizens
+      .filter((citizen) => !citizen.email && citizen.phoneNumber)
+      .map((citizen) => citizen.phoneNumber as string);
+
+    const advisoryBody = sanitizePublicHealthText(input.content) || input.content;
+
+    const emailResult =
+      emailRecipients.length > 0
+        ? await EmailSender.sendBulkAlertApprovalEmails(emailRecipients, {
+            disease: input.diseaseType,
+            location: targetLocation,
+            advisory: advisoryBody,
+            severity: input.riskLevel,
+            alertTitle: input.title,
+          })
+        : { attempted: 0, delivered: 0, failed: 0 };
+
+    const smsResult =
+      smsRecipients.length > 0
+        ? await SmsSender.sendBulkSms(
+            smsRecipients,
+            buildCitizenSmsAlert(input.diseaseType, targetLocation),
+          )
+        : { delivered: 0, failed: 0 };
+
+    Logger.info("Approved advisory citizen notification dispatched", {
+      advisoryId: input.advisoryId,
+      location: targetLocation,
+      citizensMatched: citizens.length,
+      emailRecipientsCount: emailRecipients.length,
+      smsRecipientsCount: smsRecipients.length,
+      emailAttempted: emailResult.attempted,
+      emailDelivered: emailResult.delivered,
+      emailFailed: emailResult.failed,
+      smsDelivered: smsResult.delivered,
+      smsFailed: smsResult.failed,
+    });
+
+    return {
+      emailDelivered: emailResult.delivered,
+      emailFailed: emailResult.failed,
+      smsDelivered: smsResult.delivered,
+      smsFailed: smsResult.failed,
+    };
+  }
+
   private static parseEnumValue<T extends string>(
     value: unknown,
     enumObject: Record<string, T>,
@@ -536,6 +658,10 @@ export class AdvisoryService {
         approvedAt: new Date(),
         approvedById: userId,
       },
+      include: {
+        region: { select: { name: true } },
+        district: { select: { name: true } },
+      },
     });
 
     await AuditService.append({
@@ -543,6 +669,16 @@ export class AdvisoryService {
       actorUserId: userId,
       resourceType: "Advisory",
       resourceId: advisoryId,
+    });
+
+    await this.notifyCitizensOnAdvisoryApproval({
+      advisoryId: row.id,
+      diseaseType: row.diseaseType,
+      title: row.title,
+      content: row.content,
+      riskLevel: row.riskLevel,
+      districtName: row.district?.name ?? null,
+      regionName: row.region.name,
     });
 
     return row;

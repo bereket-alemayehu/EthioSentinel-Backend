@@ -16,6 +16,50 @@ type PersistedChatMessage = {
   createdAt: Date;
 };
 
+type UserDiseaseContext = {
+  userRegion: string | null;
+  userDistrict: string | null;
+  areaScope: "DISTRICT" | "REGION" | "UNKNOWN";
+  districtsInScope: string[];
+  topDiseases: Array<{
+    diseaseType: string;
+    totalCases: number;
+    totalDeaths: number;
+    reports: number;
+  }>;
+  recentAnomalies: Array<{
+    district: string;
+    diseaseType: string;
+    zScore: number | null;
+    currentCases: number;
+    historicalMean: number;
+    stdDev: number;
+    classification: string;
+    createdAt: Date;
+  }>;
+  advisories: Array<{
+    diseaseType: string;
+    riskLevel: string;
+    title: string;
+  }>;
+  recentReports: Array<{
+    district: string;
+    diseaseType: string;
+    caseCount: number;
+    deathCount: number;
+    timestamp: Date;
+    healthFacilityName: string | null;
+    healthFacilityType: string | null;
+  }>;
+  nearbyFacilities: Array<{
+    name: string;
+    type: string;
+    district: string;
+    region: string;
+    status: string | null;
+  }>;
+};
+
 const SYSTEM_PROMPT = `You are ${env.CHAT_BOT_NAME} for Ethiopia public health use cases.
 - Give concise, practical, safe health guidance.
 - You are not a doctor; always include a short medical disclaimer.
@@ -25,6 +69,232 @@ const SYSTEM_PROMPT = `You are ${env.CHAT_BOT_NAME} for Ethiopia public health u
 - Never invent numbers that are not in provided context.`;
 
 export class ChatService {
+  private static containsAny(text: string, terms: string[]) {
+    const lower = text.toLowerCase();
+    return terms.some((term) => lower.includes(term));
+  }
+
+  private static buildDistrictWhere(districtNames: string[]) {
+    const cleaned = Array.from(
+      new Set(districtNames.map((n) => n.trim()).filter(Boolean)),
+    );
+    if (cleaned.length === 0) {
+      return undefined;
+    }
+    return {
+      OR: cleaned.map((name) => ({
+        district: {
+          equals: name,
+          mode: "insensitive" as const,
+        },
+      })),
+    };
+  }
+
+  private static async getNearbyFacilities(input: {
+    districtNames: string[];
+    userRegion: string | null;
+    limit?: number;
+  }) {
+    const limit = Math.max(1, Math.min(12, input.limit ?? 6));
+    const districts = Array.from(
+      new Set(input.districtNames.map((n) => n.trim()).filter(Boolean)),
+    );
+
+    const districtOr = districts.flatMap((name) => [
+      { Woreda: { equals: name, mode: "insensitive" as const } },
+      { district: { name: { equals: name, mode: "insensitive" as const } } },
+    ]);
+
+    const facilities = await prisma.healthFacility.findMany({
+      where: {
+        ...(districtOr.length > 0 ? { OR: districtOr } : {}),
+        ...(input.userRegion
+          ? {
+              AND: [
+                {
+                  OR: [
+                    { Region: { equals: input.userRegion, mode: "insensitive" as const } },
+                    {
+                      region: {
+                        name: {
+                          equals: input.userRegion,
+                          mode: "insensitive" as const,
+                        },
+                      },
+                    },
+                  ],
+                },
+              ],
+            }
+          : {}),
+      },
+      select: {
+        HF_Name: true,
+        HF_Type: true,
+        Woreda: true,
+        Region: true,
+        Status: true,
+      },
+      take: limit,
+    });
+
+    if (facilities.length > 0) {
+      return facilities.map((f) => ({
+        name: f.HF_Name,
+        type: f.HF_Type,
+        district: f.Woreda,
+        region: f.Region,
+        status: f.Status,
+      }));
+    }
+
+    if (!input.userRegion) {
+      return [];
+    }
+
+    const byRegion = await prisma.healthFacility.findMany({
+      where: {
+        OR: [
+          { Region: { equals: input.userRegion, mode: "insensitive" } },
+          {
+            region: {
+              name: {
+                equals: input.userRegion,
+                mode: "insensitive",
+              },
+            },
+          },
+        ],
+      },
+      select: {
+        HF_Name: true,
+        HF_Type: true,
+        Woreda: true,
+        Region: true,
+        Status: true,
+      },
+      take: limit,
+    });
+
+    return byRegion.map((f) => ({
+      name: f.HF_Name,
+      type: f.HF_Type,
+      district: f.Woreda,
+      region: f.Region,
+      status: f.Status,
+    }));
+  }
+
+  private static tryDeterministicReply(input: {
+    message: string;
+    language: AppLanguage;
+    context: UserDiseaseContext;
+  }): string | null {
+    const text = input.message.trim();
+    const asksReportFacility = this.containsAny(text, [
+      "report",
+      "reported",
+      "where was it reported",
+      "which facility",
+      "which health center",
+      "ሪፖርት",
+      "ሪፖርቱ",
+      "የት",
+      "የት ነው",
+      "ተልኳል",
+      "የተደረገ",
+      "የጤና ጣቢያ",
+      "ጤና ተቋም",
+    ]);
+
+    const asksNearbyFacility = this.containsAny(text, [
+      "nearby",
+      "nearest",
+      "health center",
+      "health facility",
+      "clinic",
+      "hospital",
+      "ቅርብ",
+      "በቅርብ",
+      "ጤና ጣቢያ",
+      "ጤና ተቋም",
+      "ሆስፒታል",
+      "ተቋም",
+    ]);
+
+    if (asksNearbyFacility) {
+      const items = input.context.nearbyFacilities.slice(0, 5);
+      if (input.language === "AMHARIC") {
+        if (items.length === 0) {
+          return [
+            "በአሁኑ የውሂብ መረጃ ውስጥ በአቅራቢያዎ የጤና ተቋም ዝርዝር አልተገኘም።",
+            "እባክዎ በአካባቢዎ ያለውን የጤና ቢሮ ወይም ሄልዝ ኤክስቴንሽን ባለሙያ ያነጋግሩ።",
+            "(ማሳሰቢያ፦ እኔ ሐኪም አይደለሁም፤ ለሕክምና ውሳኔ የጤና ባለሙያ ያማክሩ።)",
+          ].join(" ");
+        }
+        const list = items
+          .map((f, i) => `${i + 1}. ${f.name} (${f.type}) - ${f.district}`)
+          .join("\n");
+        return [
+          "በመረጃ ቋታችን መሰረት በአቅራቢያዎ የሚገኙ አንዳንድ የጤና ተቋማት እነዚህ ናቸው:",
+          list,
+          "ከባድ ምልክት ካለ አስቸኳይ ወደ ቅርብ የጤና ተቋም ይሂዱ።",
+          "(ማሳሰቢያ፦ እኔ ሐኪም አይደለሁም፤ ለሕክምና ውሳኔ የጤና ባለሙያ ያማክሩ።)",
+        ].join("\n\n");
+      }
+
+      if (items.length === 0) {
+        return [
+          "I could not find nearby facility records in the current dataset for your area.",
+          "Please contact your local health office or health extension worker for the nearest open facility.",
+          "I am an AI assistant, not a doctor. Please consult a healthcare professional.",
+        ].join(" ");
+      }
+
+      const list = items
+        .map((f, i) => `${i + 1}. ${f.name} (${f.type}) - ${f.district}`)
+        .join("\n");
+      return [
+        "Based on current records, nearby facilities include:",
+        list,
+        "If symptoms are severe, seek urgent care at the nearest facility.",
+        "I am an AI assistant, not a doctor. Please consult a healthcare professional.",
+      ].join("\n\n");
+    }
+
+    if (asksReportFacility) {
+      const latest = input.context.recentReports[0];
+      if (input.language === "AMHARIC") {
+        if (!latest) {
+          return "በአሁኑ ጊዜ በአካባቢዎ የቅርብ ሪፖርት መረጃ አልተገኘም። (ማሳሰቢያ፦ እኔ ሐኪም አይደለሁም።)";
+        }
+        if (latest.healthFacilityName) {
+          return [
+            `የቅርቡ ሪፖርት ከ "${latest.healthFacilityName}" (${latest.healthFacilityType ?? "Health Facility"}) ጋር ተያይዞ ተመዝግቧል።`,
+            `አካባቢ፦ ${latest.district}`,
+            "(ማሳሰቢያ፦ እኔ ሐኪም አይደለሁም፤ ለሕክምና ውሳኔ የጤና ባለሙያ ያማክሩ።)",
+          ].join(" ");
+        }
+        return [
+          "በመረጃ መሠረት ሪፖርቱ በወረዳ/አካባቢ ደረጃ ተመዝግቧል እንጂ የተለየ የጤና ተቋም ስም አልተጠቀሰም።",
+          `የቅርቡ ሪፖርት አካባቢ፦ ${latest.district}`,
+          "(ማሳሰቢያ፦ እኔ ሐኪም አይደለሁም፤ ለሕክምና ውሳኔ የጤና ባለሙያ ያማክሩ።)",
+        ].join(" ");
+      }
+
+      if (!latest) {
+        return "I could not find a recent report in your area right now. I am an AI assistant, not a doctor.";
+      }
+      if (latest.healthFacilityName) {
+        return `The latest report is linked to \"${latest.healthFacilityName}\" (${latest.healthFacilityType ?? "Health Facility"}) in ${latest.district}. I am an AI assistant, not a doctor.`;
+      }
+      return `Current records indicate district-level reporting in ${latest.district}, but no specific health facility is attached to that report. I am an AI assistant, not a doctor.`;
+    }
+
+    return null;
+  }
+
   private static buildFallbackReply(language: AppLanguage, context: { userDistrict?: string | null; userRegion: string | null }) {
     if (language === "AMHARIC") {
       return [
@@ -62,19 +332,6 @@ export class ChatService {
     return String(language ?? "ENGLISH").toUpperCase() === "AMHARIC" ? "AMHARIC" : "ENGLISH";
   }
 
-  private static districtWhereClause(districtNames: string[]) {
-    if (districtNames.length === 0) {
-      return undefined;
-    }
-    if (districtNames.length === 1) {
-      return {
-        equals: districtNames[0],
-        mode: "insensitive" as const,
-      };
-    }
-    return { in: districtNames };
-  }
-
   /** Resolves which district names to use for report/anomaly queries (assigned district, or all districts in user's region). */
   private static async resolveUserAreaDistrictNames(user: {
     region: string | null;
@@ -101,7 +358,7 @@ export class ChatService {
     return { districtNames: names, scope: "REGION" };
   }
 
-  private static async getUserDiseaseContext(userId: string) {
+  private static async getUserDiseaseContext(userId: string): Promise<UserDiseaseContext> {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -118,11 +375,11 @@ export class ChatService {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
     const { districtNames, scope } = await this.resolveUserAreaDistrictNames(user);
-    const districtFilter = this.districtWhereClause(districtNames);
+    const districtWhere = this.buildDistrictWhere(districtNames);
 
     const reportWhere = {
       timestamp: { gte: thirtyDaysAgo },
-      ...(districtFilter ? { district: districtFilter } : {}),
+      ...(districtWhere ?? {}),
     };
 
     const diseaseReports = await prisma.diseaseReport.groupBy({
@@ -137,7 +394,7 @@ export class ChatService {
     const anomalyWhere = {
       createdAt: { gte: thirtyDaysAgo },
       classification: "ANOMALY" as const,
-      ...(districtFilter ? { district: districtFilter } : {}),
+      ...(districtWhere ?? {}),
     };
 
     const recentAnomalies = await prisma.anomalySignal.findMany({
@@ -175,6 +432,31 @@ export class ChatService {
       take: 5,
     });
 
+    const [recentReports, nearbyFacilities] = await Promise.all([
+      prisma.diseaseReport.findMany({
+        where: reportWhere,
+        orderBy: { timestamp: "desc" },
+        take: 12,
+        select: {
+          district: true,
+          diseaseType: true,
+          caseCount: true,
+          deathCount: true,
+          timestamp: true,
+          healthFacility: {
+            select: {
+              HF_Name: true,
+              HF_Type: true,
+            },
+          },
+        },
+      }),
+      this.getNearbyFacilities({
+        districtNames,
+        userRegion: user.region,
+      }),
+    ]);
+
     return {
       userRegion: user.region,
       userDistrict: user.assignedDistrict,
@@ -188,6 +470,16 @@ export class ChatService {
       })),
       recentAnomalies,
       advisories,
+      recentReports: recentReports.map((row) => ({
+        district: row.district,
+        diseaseType: row.diseaseType,
+        caseCount: row.caseCount,
+        deathCount: row.deathCount,
+        timestamp: row.timestamp,
+        healthFacilityName: row.healthFacility?.HF_Name ?? null,
+        healthFacilityType: row.healthFacility?.HF_Type ?? null,
+      })),
+      nearbyFacilities,
     };
   }
 
@@ -368,12 +660,50 @@ export class ChatService {
       `Recent disease report totals (last ~30 days by diseaseType): ${JSON.stringify(diseaseContext.topDiseases)}`,
       `Statistical anomaly signals in this area (from z-score engine, last ~30 days): ${JSON.stringify(diseaseContext.recentAnomalies)}`,
       `Recent approved advisories: ${JSON.stringify(diseaseContext.advisories)}`,
+      `Recent report rows with source facility when present: ${JSON.stringify(diseaseContext.recentReports)}`,
+      `Nearby health facilities from DB in this user's area: ${JSON.stringify(diseaseContext.nearbyFacilities)}`,
+      "When asked where a report was submitted, use `recentReports` and mention facility only if `healthFacilityName` exists; otherwise say it is district-level only.",
+      "When asked for nearby health centers, list items from `nearbyFacilities` directly and do not claim no data if this list is non-empty.",
       "",
       "Conversation history:",
       ...history.map((item) => `${item.role}: ${item.content}`),
       "",
       `Current user message: ${text}`,
     ].join("\n");
+
+    const deterministic = this.tryDeterministicReply({
+      message: text,
+      language,
+      context: diseaseContext,
+    });
+
+    if (deterministic) {
+      const assistantMessage = await prisma.chatMessage.create({
+        data: {
+          conversationId,
+          role: "ASSISTANT",
+          content: deterministic,
+          language,
+          modelProvider: "RULES",
+        },
+        select: {
+          id: true,
+          role: true,
+          content: true,
+          language: true,
+          createdAt: true,
+        },
+      });
+
+      return {
+        id: assistantMessage.id,
+        role: assistantMessage.role,
+        text: assistantMessage.content,
+        language: this.mapLanguage(assistantMessage.language),
+        createdAt: assistantMessage.createdAt,
+        provider: "RULES",
+      };
+    }
 
     let ai: { text: string; provider: string };
     try {

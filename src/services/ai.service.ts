@@ -421,7 +421,7 @@ Affected Area:
         regionId: districtRow.regionId,
         districtId: districtRow.id,
         sourceReportId: input.reportId,
-        title: `AI Draft: ${input.diseaseType} spike detected in ${districtRow.name}`,
+        title: ` ${input.diseaseType} spike detected in ${districtRow.name}`,
         content: await this.buildSuggestedAdvisoryContent(input),
         language: "ENGLISH",
         status: "DRAFT",
