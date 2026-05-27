@@ -35,11 +35,6 @@ export class AlertController {
     return sendSuccess(res, alerts, "Alerts retrieved successfully");
   });
 
-  static getAlertById = catchAsync(async (req: Request, res: Response) => {
-    const alertId = String(req.params.id);
-    const alert = await AlertService.getAlertById(alertId);
-    return sendSuccess(res, alert, "Alert retrieved successfully");
-  });
 
   static approveAlert = catchAsync(async (req: Request, res: Response) => {
     const alertId = String(req.params.id);
