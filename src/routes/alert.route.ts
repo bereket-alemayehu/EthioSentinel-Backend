@@ -43,7 +43,7 @@ router.put(
 router.post(
   "/",
   authenticate,
-  authorize(Role.ADMIN, Role.SUPER_ADMIN),
+  authorize(Role.HEW, Role.ADMIN, Role.RESEARCHER, Role.SUPER_ADMIN),
   AlertController.createAlert,
 );
 

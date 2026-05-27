@@ -19,7 +19,7 @@ const VALID_CHANNELS = ["WEB", "SMS", "USSD", "EMAIL"] as const;
 type AlertSeverityValue = (typeof VALID_SEVERITIES)[number];
 type AlertChannelValue = (typeof VALID_CHANNELS)[number];
 
-type AlertWorkflowStatus = "Draft" | "Approved";
+type AlertWorkflowStatus = "Pending" | "Active" | "Rejected";
 
 type AlertManagementView = {
   id: string;
@@ -57,6 +57,8 @@ export class AlertService {
     channel: string;
     message: string;
     isDelivered: boolean;
+    deliveryCount: number;
+    failedCount: number;
     targetZone: string;
     aiSuggested: boolean;
     advisoryId: string | null;
@@ -90,11 +92,14 @@ export class AlertService {
       message: sanitizePublicHealthText(alert.message) || alert.message,
       disease: diseaseLabel,
       severity: alert.severity,
-      channel: alert.channel,
-      advisory: publicAdvisory || alert.message,
-      advisoryId: alert.advisoryId,
-      advisoryTitle: alert.advisory?.title ?? null,
-      status: alert.isDelivered ? "Approved" : "Draft",
+      channelString: alert.channel,
+      advisory: alert.advisory?.content ?? alert.message,
+      status:
+        alert.deliveryCount < 0 || alert.failedCount < 0
+          ? "Rejected"
+          : alert.isDelivered
+            ? "Active"
+            : "Pending",
       targetZone: alert.targetZone,
       isDelivered: alert.isDelivered,
       aiSuggested: alert.aiSuggested,
@@ -311,14 +316,21 @@ export class AlertService {
     });
   }
 
-  static async getAllAlerts(filters?: { aiSuggested?: boolean }) {
-    const where =
-      typeof filters?.aiSuggested === "boolean"
-        ? { aiSuggested: filters.aiSuggested }
-        : undefined;
+  static async getAllAlerts(filters?: { aiSuggested?: boolean; pending?: boolean }) {
+    const where: Record<string, unknown> = {};
+
+    if (typeof filters?.aiSuggested === "boolean") {
+      where.aiSuggested = filters.aiSuggested;
+    }
+
+    if (filters?.pending === true) {
+      where.isDelivered = false;
+      where.deliveryCount = { gte: 0 };
+      where.failedCount = { gte: 0 };
+    }
 
     const alerts = await prisma.alert.findMany({
-      where,
+      where: Object.keys(where).length > 0 ? where : undefined,
       include: {
         disease: true,
         advisory: true,
@@ -340,15 +352,7 @@ export class AlertService {
       where: { id: alertId },
       include: {
         disease: true,
-        advisory: {
-          select: {
-            id: true,
-            title: true,
-            content: true,
-            status: true,
-            diseaseType: true,
-          },
-        },
+        advisory: true,
       },
     });
 
@@ -444,8 +448,8 @@ export class AlertService {
       where: { id: alertId },
       data: {
         isDelivered: false,
-        deliveryCount: 0,
-        failedCount: 0,
+        deliveryCount: -1,
+        failedCount: -1,
       },
       include: {
         disease: true,
@@ -528,7 +532,7 @@ export class AlertService {
         message,
         severity: parsedSeverity,
         channel: parsedChannel,
-        isDelivered: isDelivered ?? false,
+        isDelivered: isDelivered ?? !aiSuggested,
       },
       include: {
         disease: true,
@@ -536,16 +540,11 @@ export class AlertService {
       },
     });
 
-    const view = this.toAlertManagementView(alert);
-    if (alert.aiSuggested) {
-      await this.notifyAdminsOfAiAlert(alert).catch((err) => {
-        logger.error("Failed to email admins for new AI alert", {
-          alertId: alert.id,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
+    if (alert.isDelivered) {
+      void this.triggerApprovalNotification(alert);
     }
-    return view;
+
+    return this.toAlertManagementView(alert);
   }
 
   /**
@@ -602,7 +601,9 @@ export class AlertService {
       take: cap,
     });
 
-    return alerts.map((a) => ({
+    const visibleAlerts = isPrivileged ? alerts : alerts.filter((a) => a.isDelivered);
+
+    return visibleAlerts.map((a) => ({
       id: a.id,
       title: a.title,
       message: a.message,

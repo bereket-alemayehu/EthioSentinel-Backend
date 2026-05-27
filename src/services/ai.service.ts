@@ -6,14 +6,7 @@ import { env } from "../config/env.config";
 import Logger from "../utils/logger";
 import { EmailSender } from "../utils/EmailSender";
 import { SmsSender } from "../utils/SmsSender";
-import {
-  buildAdminSpikeSummary,
-  buildCitizenAdvisoryContent,
-  buildCitizenAdvisoryTitle,
-  buildCitizenAlertMessage,
-  buildCitizenAlertTitle,
-  buildCitizenSmsAlert,
-} from "../utils/healthMessaging";
+import { ChatService } from "./chat.service";
 
 type WeeklyAggregate = {
   weekStart: string;
@@ -43,6 +36,10 @@ type ZScoreContext = {
   sampleSize: number;
   lookbackStart: Date;
   lookbackEnd: Date;
+  currentCases: number;
+  currentDeaths: number;
+  mortalityRate: number;
+  mortalitySignal: boolean;
 };
 
 type AdHocZScoreResult = {
@@ -202,6 +199,7 @@ export class AIService {
         },
       },
       select: {
+        id: true,
         timestamp: true,
         caseCount: true,
         deathCount: true,
@@ -211,10 +209,18 @@ export class AIService {
       },
     });
 
-    const caseValues = historicalReports.map(
-      (entry: { caseCount: number }) => entry.caseCount,
-    );
-    const stats = this.computeStats(caseValues);
+    const baselineReports = historicalReports.filter((r) => r.id !== report.id);
+    const caseValues = baselineReports.map((entry) => entry.caseCount);
+    
+    // Fallback: if baseline is empty, include the current report so we don't divide by zero later unnecessarily
+    const baselineForStats = caseValues.length > 0 ? caseValues : [report.caseCount];
+    const stats = this.computeStats(baselineForStats);
+
+    const totalCases = historicalReports.reduce((sum, r) => sum + r.caseCount, 0);
+    const totalDeaths = historicalReports.reduce((sum, r) => sum + r.deathCount, 0);
+    const mortalityRate = totalCases > 0 ? totalDeaths / totalCases : 0;
+    const currentDeaths = report.deathCount;
+    const mortalitySignal = currentDeaths >= 3 || (currentDeaths > 0 && mortalityRate >= 0.1);
 
     return {
       payload: {
@@ -226,6 +232,10 @@ export class AIService {
       sampleSize: stats.sampleSize,
       lookbackStart,
       lookbackEnd: report.timestamp,
+      currentCases: report.caseCount,
+      currentDeaths,
+      mortalityRate: Number(mortalityRate.toFixed(4)),
+      mortalitySignal,
     };
   }
 
@@ -301,21 +311,59 @@ export class AIService {
     return "MODERATE";
   }
 
-  private static buildSuggestedAdvisoryContent(input: {
+  private static async buildSuggestedAdvisoryContent(input: {
     diseaseType: string;
     district: string;
     currentCases: number;
     historicalMean: number;
     zScore?: number;
-  }): string {
-    const riskLevel = this.getRiskLevelFromZScore(input.zScore);
-    return buildCitizenAdvisoryContent({
-      diseaseType: input.diseaseType,
-      district: input.district,
-      currentCases: input.currentCases,
-      historicalMean: input.historicalMean,
-      riskLevel,
-    });
+  }): Promise<string> {
+    const z = typeof input.zScore === "number" ? input.zScore.toFixed(2) : "unknown";
+    
+    const prompt = `
+You are an expert public health AI.
+Generate a citizen-friendly health advisory for a recent anomaly detected for ${input.diseaseType} in ${input.district}.
+The data shows current cases are ${input.currentCases} against a historical mean of ${input.historicalMean.toFixed(2)} with a z-score of ${z}.
+Format the advisory EXACTLY like this:
+Title: [Advisory Title]
+
+Disease: [Disease Name]
+
+Symptoms:
+- [Symptom 1]
+- [Symptom 2]
+
+Prevention:
+- [Prevention step 1]
+- [Prevention step 2]
+
+Treatment / Action:
+- [Action 1]
+- [Action 2]
+
+Emergency Signs:
+- [Sign 1]
+- [Sign 2]
+
+Affected Area:
+- ${input.district} and surrounding areas
+    `.trim();
+
+    try {
+      const text = await ChatService.requestGeminiReply({ prompt });
+      return text;
+    } catch (e) {
+      Logger.error("Failed to generate advisory with Gemini, using fallback text", { error: e instanceof Error ? e.message : String(e) });
+      return [
+        `AI anomaly signal detected for ${input.diseaseType} in ${input.district}.`,
+        `Current cases: ${input.currentCases}; baseline mean: ${input.historicalMean.toFixed(2)}; z-score: ${z}.`,
+        "Suggested immediate actions:",
+        "1) Activate targeted community awareness in affected kebeles.",
+        "2) Increase case confirmation and triage at nearby health facilities.",
+        "3) Reinforce prevention supplies and rapid response follow-up.",
+        "This draft was generated automatically and requires ADMIN review before public broadcast.",
+      ].join("\n");
+    }
   }
 
   private static async createAiSuggestedAdvisoryDraft(input: {
@@ -368,8 +416,8 @@ export class AIService {
         regionId: districtRow.regionId,
         districtId: districtRow.id,
         sourceReportId: input.reportId,
-        title: buildCitizenAdvisoryTitle(input.diseaseType, districtRow.name),
-        content: this.buildSuggestedAdvisoryContent(input),
+        title: `AI Draft: ${input.diseaseType} spike detected in ${districtRow.name}`,
+        content: await this.buildSuggestedAdvisoryContent(input),
         language: "ENGLISH",
         status: "DRAFT",
         riskLevel,
@@ -623,134 +671,145 @@ export class AIService {
     if (!context) {
       return;
     }
-    const { payload, sampleSize, lookbackStart, lookbackEnd } = context;
-    if (payload.std_dev <= 0) {
-      Logger.info("Skipping AI anomaly trigger due to zero variance baseline", {
-        reportId,
-        currentCases: payload.current_cases,
-        historicalMean: payload.historical_mean,
-        stdDev: payload.std_dev,
-      });
-      return;
-    }
+    const { payload, sampleSize, lookbackStart, lookbackEnd, currentCases, currentDeaths, mortalityRate, mortalitySignal } = context;
 
-    const endpoint = new URL(
-      env.AI_SERVICE_ZSCORE_PATH,
-      env.AI_SERVICE_BASE_URL,
-    ).toString();
+    let zScore: number | undefined;
+    let classification: "ANOMALY" | "NORMAL" = "NORMAL";
 
-    let attempt = 0;
-    let lastErrorMessage = "Unknown AI service error";
+    if (payload.std_dev > 0) {
+      const endpoint = new URL(
+        env.AI_SERVICE_ZSCORE_PATH,
+        env.AI_SERVICE_BASE_URL,
+      ).toString();
 
-    while (attempt < env.AI_SERVICE_RETRY_COUNT) {
-      attempt += 1;
-      try {
-        const response = await this.postJson(endpoint, payload);
-        if (response.statusCode >= 200 && response.statusCode < 300) {
-          const parsedResponse = this.parseDetectionApiResponse(response.body);
-          const classification = String(
-            parsedResponse?.classification ?? "",
-          ).toUpperCase();
-          const zScore =
-            typeof parsedResponse?.z_score === "number"
-              ? parsedResponse.z_score
-              : undefined;
+      let attempt = 0;
+      let lastErrorMessage = "Unknown AI service error";
+      let success = false;
 
-          let advisoryDraftId: string | undefined;
-          let alertId: string | undefined;
-
-          const reportRow = await prisma.diseaseReport.findUnique({
-            where: { id: reportId },
-            select: {
-              id: true,
-              diseaseType: true,
-              district: true,
-              caseCount: true,
-            },
-          });
-
-          if (classification === "ANOMALY" && reportRow) {
-            const advisoryDraft = await this.createAiSuggestedAdvisoryDraft({
-              reportId: reportRow.id,
-              diseaseType: reportRow.diseaseType,
-              district: reportRow.district,
-              currentCases: reportRow.caseCount,
-              historicalMean: payload.historical_mean,
-              zScore,
-            });
-            advisoryDraftId = advisoryDraft?.id;
-
-            alertId = await this.createAdminReviewAlertAndNotify({
-              reportId: reportRow.id,
-              diseaseType: reportRow.diseaseType,
-              district: reportRow.district,
-              currentCases: reportRow.caseCount,
-              historicalMean: payload.historical_mean,
-              zScore,
-              advisoryDraftId,
-            });
-          }
-
-          if (reportRow) {
-            await this.persistAnomalySignal({
+      while (attempt < env.AI_SERVICE_RETRY_COUNT && !success) {
+        attempt += 1;
+        try {
+          const response = await this.postJson(endpoint, payload);
+          if (response.statusCode >= 200 && response.statusCode < 300) {
+            const parsedResponse = this.parseDetectionApiResponse(response.body);
+            if (String(parsedResponse?.classification ?? "").toUpperCase() === "ANOMALY") {
+              classification = "ANOMALY";
+            }
+            if (typeof parsedResponse?.z_score === "number") {
+              zScore = parsedResponse.z_score;
+            }
+            success = true;
+            Logger.info("AI anomaly trigger sent successfully", {
               reportId,
-              district: {
-                district: reportRow.district,
-                diseaseType: reportRow.diseaseType,
-              },
-              payload,
-              zScore,
-              classification:
-                classification === "ANOMALY" ? "ANOMALY" : "NORMAL",
-              sampleSize,
-              lookbackStart,
-              lookbackEnd,
-              advisoryId: advisoryDraftId,
-              alertId,
-              manual: false,
+              endpoint,
+              attempt,
+              statusCode: response.statusCode,
+              responseBody: response.body.slice(0, 400),
+            });
+          } else {
+            lastErrorMessage = `AI service returned status ${response.statusCode}`;
+            Logger.warn("AI anomaly trigger returned non-success status", {
+              reportId,
+              attempt,
+              statusCode: response.statusCode,
+              responseBody: response.body.slice(0, 400),
             });
           }
-
-          Logger.info("AI anomaly trigger sent successfully", {
+        } catch (error) {
+          lastErrorMessage = error instanceof Error ? error.message : String(error);
+          Logger.warn("AI anomaly trigger attempt failed", {
             reportId,
-            endpoint,
             attempt,
-            statusCode: response.statusCode,
-            responseBody: response.body.slice(0, 400),
+            error: lastErrorMessage,
           });
-          return;
         }
 
-        lastErrorMessage = `AI service returned status ${response.statusCode}`;
-        Logger.warn("AI anomaly trigger returned non-success status", {
-          reportId,
-          attempt,
-          statusCode: response.statusCode,
-          responseBody: response.body.slice(0, 400),
-        });
-      } catch (error) {
-        lastErrorMessage =
-          error instanceof Error ? error.message : String(error);
-        Logger.warn("AI anomaly trigger attempt failed", {
-          reportId,
-          attempt,
-          error: lastErrorMessage,
-        });
+        if (!success && attempt < env.AI_SERVICE_RETRY_COUNT) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, env.AI_SERVICE_RETRY_DELAY_MS * attempt),
+          );
+        }
       }
 
-      if (attempt < env.AI_SERVICE_RETRY_COUNT) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, env.AI_SERVICE_RETRY_DELAY_MS * attempt),
-        );
+      if (!success) {
+        Logger.error("AI anomaly trigger exhausted retries, falling back to local calculation", {
+          reportId,
+          endpoint,
+          attempts: env.AI_SERVICE_RETRY_COUNT,
+          error: lastErrorMessage,
+        });
+        zScore = (currentCases - payload.historical_mean) / payload.std_dev;
+        classification = zScore > 2 ? "ANOMALY" : "NORMAL";
+      }
+    } else {
+      if (!mortalitySignal) {
+        Logger.info("Skipping AI anomaly trigger due to zero variance baseline and no mortality", {
+          reportId,
+          currentCases: payload.current_cases,
+          historicalMean: payload.historical_mean,
+          stdDev: payload.std_dev,
+        });
+        return;
       }
     }
 
-    Logger.error("AI anomaly trigger exhausted retries", {
-      reportId,
-      endpoint,
-      attempts: env.AI_SERVICE_RETRY_COUNT,
-      error: lastErrorMessage,
+    if (mortalitySignal) {
+      classification = "ANOMALY";
+    }
+
+    let advisoryDraftId: string | undefined;
+    let alertId: string | undefined;
+
+    const reportRow = await prisma.diseaseReport.findUnique({
+      where: { id: reportId },
+      select: {
+        id: true,
+        diseaseType: true,
+        district: true,
+        caseCount: true,
+      },
     });
+
+    if (classification === "ANOMALY" && reportRow) {
+      const advisoryDraft = await this.createAiSuggestedAdvisoryDraft({
+        reportId: reportRow.id,
+        diseaseType: reportRow.diseaseType,
+        district: reportRow.district,
+        currentCases: reportRow.caseCount,
+        historicalMean: payload.historical_mean,
+        zScore,
+      });
+      advisoryDraftId = advisoryDraft?.id;
+
+      alertId = await this.createAdminReviewAlertAndNotify({
+        reportId: reportRow.id,
+        diseaseType: reportRow.diseaseType,
+        district: reportRow.district,
+        currentCases: reportRow.caseCount,
+        historicalMean: payload.historical_mean,
+        zScore,
+        advisoryDraftId,
+      });
+    }
+
+    if (reportRow) {
+      await this.persistAnomalySignal({
+        reportId,
+        district: {
+          district: reportRow.district,
+          diseaseType: reportRow.diseaseType,
+        },
+        payload,
+        zScore,
+        classification,
+        sampleSize,
+        lookbackStart,
+        lookbackEnd,
+        advisoryId: advisoryDraftId,
+        alertId,
+        manual: false,
+      });
+    }
   }
 
   private static async persistAnomalySignal(input: {

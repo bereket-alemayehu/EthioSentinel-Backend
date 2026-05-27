@@ -254,7 +254,7 @@ export class ChatService {
   }
 
 
-  private static async requestGeminiReply(input: { prompt: string }) {
+  public static async requestGeminiReply(input: { prompt: string }) {
     if (!env.GEMINI_API_KEY) {
       throw new Error("GEMINI_API_KEY is missing");
     }

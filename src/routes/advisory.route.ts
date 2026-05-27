@@ -39,7 +39,6 @@ router.get(
 router.get(
   "/:id",
   authenticate,
-  authorize(Role.ADMIN, Role.SUPER_ADMIN),
   AdvisoryController.getAdvisoryById,
 );
 

@@ -12,6 +12,7 @@ export class AlertController {
 
   static getAllAlerts = catchAsync(async (req: Request, res: Response) => {
     const aiSuggestedRaw = req.query.aiSuggested;
+    const pendingRaw = req.query.pending;
     const aiSuggested =
       typeof aiSuggestedRaw === "string"
         ? aiSuggestedRaw.toLowerCase() === "true"
@@ -21,8 +22,23 @@ export class AlertController {
             : undefined
         : undefined;
 
-    const alerts = await AlertService.getAllAlerts({ aiSuggested });
+    const pending =
+      typeof pendingRaw === "string"
+        ? pendingRaw.toLowerCase() === "true"
+          ? true
+          : pendingRaw.toLowerCase() === "false"
+            ? false
+            : undefined
+        : undefined;
+
+    const alerts = await AlertService.getAllAlerts({ aiSuggested, pending });
     return sendSuccess(res, alerts, "Alerts retrieved successfully");
+  });
+
+  static getAlertById = catchAsync(async (req: Request, res: Response) => {
+    const alertId = String(req.params.id);
+    const alert = await AlertService.getAlertById(alertId);
+    return sendSuccess(res, alert, "Alert retrieved successfully");
   });
 
   static approveAlert = catchAsync(async (req: Request, res: Response) => {
