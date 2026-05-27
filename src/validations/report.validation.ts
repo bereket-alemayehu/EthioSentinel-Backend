@@ -31,9 +31,7 @@ type ValidatedReportInput = {
  * - Counts must be non-negative integers
  * - Notes are sanitized to strip PII before persistence
  */
-export function validateAndSanitizeReport(
-  input: ReportInput,
-): ValidatedReportInput {
+export function validateAndSanitizeReport(input: ReportInput,): ValidatedReportInput {
   const district = String(input.district ?? "").trim();
   if (!district) {
     throw new AppError("district is required", 400);
