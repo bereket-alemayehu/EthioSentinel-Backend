@@ -182,6 +182,73 @@ export function buildCitizenAdvisoryContent(input: HealthMessagingInput): string
   });
 }
 
+import { ChatService } from "../services/chat.service";
+
+/**
+ * Translate arbitrary user-facing text into a target language using Gemini.
+ * Returns original text when target language is English or empty.
+ */
+async function translateText(text: string, targetLang?: string): Promise<string> {
+  const lang = (targetLang ?? "").trim();
+  if (!lang) return text;
+  const l = lang.toLowerCase();
+  if (l === "en" || l.startsWith("en") || l === "english") return text;
+
+  const prompt = `Translate the following public-health advisory text into ${lang} for a general Ethiopian audience.
+- Keep the tone clear, concise and non-technical.
+- Preserve placeholders like disease names and district names.
+- Keep lists and numbered items separated by newlines.
+- Output only the translated text without commentary.
+
+Text:
+${text}`;
+
+  try {
+    const translated = await ChatService.requestGeminiReply({ prompt });
+    return translated.trim();
+  } catch (e) {
+    return text; // fallback to English on translation error
+  }
+}
+
+/**
+ * Localized version of full advisory content. Returns English by default.
+ */
+export async function buildCitizenAdvisoryContentLocalized(
+  input: HealthMessagingInput,
+  language?: string,
+): Promise<string> {
+  const english = buildDetailedCitizenAdvisory({
+    diseaseType: input.diseaseType,
+    district: input.district,
+    currentCases: input.currentCases,
+    riskLevel: input.riskLevel ?? "MODERATE",
+  });
+  if (!language) return english;
+  return translateText(english, language);
+}
+
+/**
+ * Localized short SMS alert. Ensures brevity by asking the translator to keep it concise.
+ */
+export async function buildCitizenSmsAlertLocalized(
+  diseaseType: string,
+  district: string,
+  language?: string,
+): Promise<string> {
+  const base = buildCitizenSmsAlert(diseaseType, district);
+  if (!language) return base;
+
+  const prompt = `Translate the following SMS into ${language} for a general Ethiopian audience. Keep it under 160 characters, preserve the disease and district names, and output only the translated SMS.\n\nSMS:\n${base}`;
+
+  try {
+    const translated = await ChatService.requestGeminiReply({ prompt });
+    return translated.trim();
+  } catch (e) {
+    return base;
+  }
+}
+
 /** Expand short legacy or admin one-line advisories for public display. */
 export function enrichCitizenAdvisoryContent(
   raw: string,
