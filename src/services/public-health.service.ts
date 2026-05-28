@@ -118,13 +118,18 @@ function parseRssItems(xml: string): OutbreakNewsItem[] {
       return tagMatch?.[1]?.replace(/^<!\[CDATA\[|\]\]>$/g, "") ?? "";
     };
     const title = stripHtml(readTag("title"));
-    const summary = extractReadableSummary(readTag("description"));
+    const rawDescription = readTag("description");
+    const summary = extractReadableSummary(rawDescription);
     const url = stripHtml(readTag("link"));
     const publishedAt = stripHtml(readTag("pubDate"));
+    const imageFromDescription = stripHtml(
+      rawDescription.match(/<img[^>]*src=["']([^"']+)["']/i)?.[1] ?? "",
+    );
     const imageUrl = stripHtml(
       item.match(/<media:content[^>]*url=["']([^"']+)["']/i)?.[1] ??
         item.match(/<media:thumbnail[^>]*url=["']([^"']+)["']/i)?.[1] ??
         item.match(/<enclosure[^>]*url=["']([^"']+)["']/i)?.[1] ??
+        imageFromDescription ??
         "",
     );
     const text = `${title} ${summary}`;

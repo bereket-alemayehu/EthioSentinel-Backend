@@ -366,6 +366,99 @@ async function seedAlerts() {
   console.log("Seeding alerts and advisories complete.");
 }
 
+async function seedAradaCriticalAlert() {
+  const admin = await prisma.user.findFirst({ where: { role: Role.ADMIN } });
+  if (!admin) {
+    console.log("⚠️ Skipping Arada critical alert seed: no ADMIN user.");
+    return;
+  }
+
+  const addisAbaba = await prisma.region.findFirst({
+    where: { name: { equals: "Addis Ababa", mode: "insensitive" } },
+    select: { id: true, name: true },
+  });
+
+  const aradaDistrict = await prisma.district.findFirst({
+    where: { name: { equals: "Arada", mode: "insensitive" } },
+    select: { id: true, name: true },
+  });
+
+  if (!addisAbaba) {
+    console.log(
+      "⚠️ Skipping Arada critical alert seed: Addis Ababa region not found.",
+    );
+    return;
+  }
+
+  const advisoryTitle = "Critical Malaria Situation in Arada";
+  const alertTitle = "CRITICAL ALERT: Malaria surge in Addis Ababa - Arada";
+  const alertMessage =
+    "A critical malaria surge has been detected in Arada district, Addis Ababa. " +
+    "Residents should use treated bed nets, avoid stagnant water exposure, and seek immediate care for fever, chills, or severe headache. " +
+    "Health teams are increasing surveillance and response in the area.";
+  const advisoryContent = [
+    "Disease: Malaria",
+    "",
+    "Situation summary:",
+    "Arada district has recorded a sharp rise in suspected and confirmed malaria cases over a short period.",
+    "Urgent community action is required to prevent further transmission.",
+    "",
+    "What residents should do now:",
+    "- Sleep under insecticide-treated bed nets every night.",
+    "- Remove standing water around homes and compounds.",
+    "- Wear protective clothing in the evening and early morning.",
+    "- Visit the nearest health facility immediately if fever or chills develop.",
+    "",
+    "Priority groups:",
+    "- Children under 5",
+    "- Pregnant women",
+    "- Elderly residents and people with chronic illness",
+    "",
+    "Emergency signs requiring urgent medical attention:",
+    "- Persistent high fever",
+    "- Confusion or convulsions",
+    "- Vomiting, weakness, or inability to drink fluids",
+  ].join("\n");
+
+  await prisma.alert.deleteMany({
+    where: {
+      title: alertTitle,
+      targetZone: "Arada",
+      aiSuggested: true,
+    },
+  });
+
+  const advisory = await prisma.advisory.create({
+    data: {
+      title: advisoryTitle,
+      content: advisoryContent,
+      diseaseType: "Malaria",
+      regionId: addisAbaba.id,
+      districtId: aradaDistrict?.id ?? null,
+      language: Language.ENGLISH,
+      status: "APPROVED",
+      riskLevel: "CRITICAL",
+      generatedByAI: true,
+    },
+  });
+
+  await prisma.alert.create({
+    data: {
+      targetZone: "Arada",
+      title: alertTitle,
+      message: alertMessage,
+      severity: "CRITICAL",
+      channel: "WEB",
+      isDelivered: true,
+      advisoryId: advisory.id,
+      createdById: admin.id,
+      aiSuggested: true,
+    },
+  });
+
+  console.log("✅ Seeded CRITICAL alert + advisory for Addis Ababa / Arada");
+}
+
 /** Recent reports + anomaly rows so Admin → Anomaly Analysis chart/table/map have data. */
 async function seedAnomalyDemoData() {
   const hew = await prisma.user.findFirst({ where: { role: Role.HEW } });
@@ -445,6 +538,8 @@ async function main() {
 
   // await seedAlerts();
   // console.log("✅ Seeded sample alerts for approval");
+
+  await seedAradaCriticalAlert();
 
   // await seedAnomalyDemoData();
 }
