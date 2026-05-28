@@ -16,9 +16,10 @@ type OfflineReportItem = {
   timestamp?: unknown;
   notes?: unknown;
   isOfflineCached?: unknown;
+  healthFacilityId?: unknown;
 };
 
-type SyncUser = { id: string; role: Role };
+type SyncUser = { id: string; role: Role; healthFacilityId?: number | null };
 
 type SyncResult = {
   accepted: number;
@@ -56,6 +57,7 @@ export class ReportSyncService {
       timestamp: Date | undefined;
       notes: string | undefined;
       isOfflineCached: boolean;
+      healthFacilityId: number | undefined;
     };
 
     const valid: ValidItem[] = [];
@@ -94,6 +96,7 @@ export class ReportSyncService {
             diseaseType: item.diseaseType,
             diseaseId: item.diseaseId,
             reporterId: effectiveReporterId,
+            healthFacilityId: item.healthFacilityId || user.healthFacilityId || null,
             caseCount: item.caseCount,
             deathCount: item.deathCount,
             isOfflineCached: true,

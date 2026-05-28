@@ -9,8 +9,8 @@ type OutbreakNewsItem = {
   summary: string;
   url: string;
   publishedAt: string | null;
-  source: "WHO" | "WHO Africa";
-  scope: "GLOBAL" | "AFRICA";
+  source: "WHO" | "WHO Africa" | "Google News";
+  scope: "GLOBAL" | "AFRICA" | "ETHIOPIA";
   diseases: string[];
   countries: string[];
 };
@@ -392,6 +392,24 @@ export class PublicHealthService {
       }
     } catch (error) {
       Logger.warn("Failed to fetch WHO Africa RSS", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    try {
+      const GOOGLE_NEWS_RSS = "https://news.google.com/rss/search?q=Ethiopia+health&hl=en-US&gl=US&ceid=US:en";
+      const response = await fetch(GOOGLE_NEWS_RSS);
+      if (response.ok) {
+        results.push(
+          ...parseRssItems(await response.text()).map((item) => ({
+            ...item,
+            source: "Google News" as const,
+            scope: "ETHIOPIA" as const,
+          })),
+        );
+      }
+    } catch (error) {
+      Logger.warn("Failed to fetch Google News RSS", {
         error: error instanceof Error ? error.message : String(error),
       });
     }

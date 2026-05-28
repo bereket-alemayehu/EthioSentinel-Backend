@@ -208,34 +208,34 @@ async function seedUsers() {
   });
 }
 
-async function seedReports() {
-  const diseases = ["Malaria", "Cholera", "Dengue", "Measles","Ebola","HIV/AIDS"];
-  const districts = await prisma.district.findMany({ take: 10 });
-  const user = await prisma.user.findFirst({ where: { role: Role.HEW } });
+// async function seedReports() {
+//   const diseases = ["Malaria", "Cholera", "Dengue", "Measles","Ebola","HIV/AIDS"];
+//   const districts = await prisma.district.findMany({ take: 10 });
+//   const user = await prisma.user.findFirst({ where: { role: Role.HEW } });
 
-  if (!user) return;
+//   if (!user) return;
 
-  console.log("🌱 Seeding reports...");
+//   console.log("🌱 Seeding reports...");
 
-  for (const district of districts) {
-    for (const disease of diseases) {
-      const caseCount = Math.floor(Math.random() * 200);
-      const deathCount = Math.floor(caseCount * 0.05);
+//   for (const district of districts) {
+//     for (const disease of diseases) {
+//       const caseCount = Math.floor(Math.random() * 200);
+//       const deathCount = Math.floor(caseCount * 0.05);
 
-      await prisma.diseaseReport.create({
-        data: {
-          district: district.name,
-          diseaseType: disease,
-          reporterId: user.id,
-          caseCount,
-          deathCount,
-          status: "VERIFIED",
-          notes: `Simulated ${disease} report for ${district.name}`,
-        },
-      });
-    }
-  }
-}
+//       await prisma.diseaseReport.create({
+//         data: {
+//           district: district.name,
+//           diseaseType: disease,
+//           reporterId: user.id,
+//           caseCount,
+//           deathCount,
+//           status: "VERIFIED",
+//           notes: `Simulated ${disease} report for ${district.name}`,
+//         },
+//       });
+//     }
+//   }
+// }
 
 async function seedAlerts() {
   const admin = await prisma.user.findFirst({ where: { role: Role.ADMIN } });
@@ -394,13 +394,13 @@ async function main() {
   await seedHealthCenters();
   console.log("✅ Seeded health facilities from real data");
 
-  await seedReports();
-  console.log("✅ Seeded sample disease reports");
+  // await seedReports();
+  // console.log("✅ Seeded sample disease reports");
 
-  await seedAlerts();
-  console.log("✅ Seeded sample alerts for approval");
+    // await seedAlerts();
+    // console.log("✅ Seeded sample alerts for approval");
 
-  await seedAnomalyDemoData();
+  // await seedAnomalyDemoData();
 }
 
 main()

@@ -206,6 +206,8 @@ model DiseaseReport {
   notes               String?
   disease             Disease?       @relation(fields: [diseaseId], references: [id], onDelete: SetNull)
   reporter            User           @relation("ReportSubmittedBy", fields: [reporterId], references: [id], onDelete: Cascade)
+  healthFacilityId    Int?
+  healthFacility      HealthFacility? @relation(fields: [healthFacilityId], references: [id], onDelete: SetNull)
   advisories          Advisory[]
   anomalySignals      AnomalySignal[]
   createdAt           DateTime       @default(now())
@@ -214,6 +216,7 @@ model DiseaseReport {
   @@index([district, timestamp])
   @@index([diseaseType, timestamp])
   @@index([status])
+  @@index([healthFacilityId])
 }
 
 model AnomalySignal {
@@ -320,6 +323,7 @@ model HealthFacility {
   district   District?@relation(fields: [districtId], references: [id], onDelete: SetNull)
   ownerUser  User?    @relation(fields: [ownerId], references: [id], onDelete: SetNull)
   assignedUser User?  @relation("UserHealthFacility")
+  reports      DiseaseReport[]
 
   @@index([regionId])
   @@index([districtId])

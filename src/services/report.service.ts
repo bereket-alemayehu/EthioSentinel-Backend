@@ -154,6 +154,7 @@ export class ReportService {
             },
           },
           disease: true,
+          healthFacility: true,
         },
         orderBy: {
           timestamp: "desc",
@@ -195,7 +196,8 @@ export class ReportService {
     date?: string;
     reportDate?: string;
     timestamp?: string;
-    user: { id: string; role: Role };
+    healthFacilityId?: number;
+    user: { id: string; role: Role; healthFacilityId?: number | null };
   }) {
     const {
       district,
@@ -210,6 +212,7 @@ export class ReportService {
       date,
       reportDate,
       timestamp,
+      healthFacilityId,
       user,
     } = data;
 
@@ -224,6 +227,7 @@ export class ReportService {
       timestamp,
       notes,
       isOfflineCached,
+      healthFacilityId,
     });
 
     const trimmedReporterId = reporterId?.trim();
@@ -247,6 +251,7 @@ export class ReportService {
           diseaseType: sanitized.diseaseType,
           diseaseId: diseaseId || sanitized.diseaseId,
           reporterId: effectiveReporterId,
+          healthFacilityId: sanitized.healthFacilityId || user.healthFacilityId || null,
           caseCount: sanitized.caseCount,
           deathCount: sanitized.deathCount,
           isOfflineCached: sanitized.isOfflineCached,
@@ -264,6 +269,7 @@ export class ReportService {
               role: true,
             },
           },
+          healthFacility: true,
         },
       });
     } catch (error: unknown) {
@@ -329,6 +335,7 @@ export class ReportService {
       date?: string;
       reportDate?: string;
       timestamp?: string;
+      healthFacilityId?: number;
       userId: string;
       userRole: Role;
       userEmail: string;
@@ -355,6 +362,7 @@ export class ReportService {
       reportDate: data.reportDate,
       timestamp: data.timestamp,
       notes: data.notes,
+      healthFacilityId: data.healthFacilityId,
     });
 
     const before = {
@@ -363,6 +371,7 @@ export class ReportService {
       caseCount: report.caseCount,
       deathCount: report.deathCount,
       reporterId: report.reporterId,
+      healthFacilityId: report.healthFacilityId,
     };
 
     const updated = await prisma.diseaseReport.update({
@@ -376,6 +385,7 @@ export class ReportService {
         timestamp: sanitized.timestamp,
         notes: sanitized.notes,
         isMortalityPriority: sanitized.deathCount > 0,
+        healthFacilityId: sanitized.healthFacilityId !== undefined ? sanitized.healthFacilityId : undefined,
       },
     });
 

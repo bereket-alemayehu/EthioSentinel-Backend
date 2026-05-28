@@ -257,7 +257,7 @@ export class AlertService {
   private static async triggerApprovalNotification(
     alert: AlertNotificationDetails,
   ) {
-    const emails = await this.collectAdminNotificationEmails();
+    const adminEmails = await this.collectAdminNotificationEmails();
 
     const diseaseLabel = resolveDiseaseDisplayName({
       diseaseName: alert.disease?.name,
@@ -268,42 +268,70 @@ export class AlertService {
       alert.advisory?.content ?? alert.message,
     );
 
-    const emailResult = await EmailSender.sendBulkAlertApprovalEmails(emails, {
-      disease: diseaseLabel,
-      location: alert.targetZone,
-      advisory: publicAdvisory,
-      severity: alert.severity,
-      alertTitle: alert.title ?? `Health alert: ${diseaseLabel}`,
-    });
+    const adminEmailResult = await EmailSender.sendBulkAlertApprovalEmails(
+      adminEmails,
+      {
+        disease: diseaseLabel,
+        location: alert.targetZone,
+        advisory: publicAdvisory,
+        severity: alert.severity,
+        alertTitle: alert.title ?? `Health alert: ${diseaseLabel}`,
+      },
+    );
 
     const citizensInDistrict = await prisma.user.findMany({
       where: {
         role: "CITIZEN",
-        assignedDistrict: alert.targetZone,
+        assignedDistrict: {
+          equals: alert.targetZone,
+          mode: "insensitive",
+        },
         isActive: true,
-        phoneNumber: { not: null },
       },
-      select: { phoneNumber: true },
+      select: {
+        email: true,
+        phoneNumber: true,
+      },
     });
-    const phones = citizensInDistrict
-      .map((u) => u.phoneNumber)
-      .filter(Boolean) as string[];
-    let smsDelivered = 0;
-    let smsFailed = 0;
-    if (phones.length > 0) {
-      const smsResult = await SmsSender.sendBulkSms(
-        phones,
-        buildCitizenSmsAlert(diseaseLabel, alert.targetZone),
-      );
-      smsDelivered = smsResult.delivered;
-      smsFailed = smsResult.failed;
-    }
+
+    const citizenEmails = citizensInDistrict
+      .map((u) => u.email?.trim())
+      .filter((email): email is string => Boolean(email));
+
+    const smsFallbackPhones = citizensInDistrict
+      .filter((u) => !u.email && u.phoneNumber)
+      .map((u) => u.phoneNumber as string);
+
+    const citizenEmailResult =
+      citizenEmails.length > 0
+        ? await EmailSender.sendBulkAlertApprovalEmails(citizenEmails, {
+            disease: diseaseLabel,
+            location: alert.targetZone,
+            advisory: publicAdvisory,
+            severity: alert.severity,
+            alertTitle: alert.title ?? `Health alert: ${diseaseLabel}`,
+          })
+        : { attempted: 0, delivered: 0, failed: 0 };
+
+    const smsResult =
+      smsFallbackPhones.length > 0
+        ? await SmsSender.sendBulkSms(
+            smsFallbackPhones,
+            buildCitizenSmsAlert(diseaseLabel, alert.targetZone),
+          )
+        : { delivered: 0, failed: 0 };
 
     await prisma.alert.update({
       where: { id: alert.id },
       data: {
-        deliveryCount: emailResult.delivered + smsDelivered,
-        failedCount: emailResult.failed + smsFailed,
+        deliveryCount:
+          adminEmailResult.delivered +
+          citizenEmailResult.delivered +
+          smsResult.delivered,
+        failedCount:
+          adminEmailResult.failed +
+          citizenEmailResult.failed +
+          smsResult.failed,
       },
     });
 
@@ -312,9 +340,14 @@ export class AlertService {
       disease: alert.disease?.name ?? null,
       severity: alert.severity,
       targetZone: alert.targetZone,
-      recipientsAttempted: emailResult.attempted,
-      delivered: emailResult.delivered,
-      failed: emailResult.failed,
+      adminEmailsAttempted: adminEmailResult.attempted,
+      adminEmailsDelivered: adminEmailResult.delivered,
+      adminEmailsFailed: adminEmailResult.failed,
+      citizenEmailsAttempted: citizenEmailResult.attempted,
+      citizenEmailsDelivered: citizenEmailResult.delivered,
+      citizenEmailsFailed: citizenEmailResult.failed,
+      citizenSmsDelivered: smsResult.delivered,
+      citizenSmsFailed: smsResult.failed,
     });
   }
 

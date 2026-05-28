@@ -68,7 +68,7 @@ export class HealthService {
       facilities.map(async (facility) => {
         const reports = await prisma.diseaseReport.findMany({
           where: {
-            district: facility.Woreda || undefined,
+            healthFacilityId: facility.id,
             createdAt: { gte: dateFrom },
           },
           select: {
