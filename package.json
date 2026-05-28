@@ -8,6 +8,8 @@
     "dev": "nodemon --watch src --ext ts,json --exec ts-node --files src/server.ts",
     "dev:ai": "cd anomaly-detection-service && .venv/bin/python app.py",
     "dev:with-ai": "concurrently -n backend,ai -c cyan,magenta \"npm run dev\" \"npm run dev:ai\"",
+    "dev:ai:win": "cd anomaly-detection-service && .venv\\Scripts\\python app.py",
+    "dev:with-ai:win": "concurrently -n backend,ai -c cyan,magenta \"npm run dev\" \"npm run dev:ai:win\"",
     "build": "tsc",
     "postinstall": "prisma generate --config prisma.config.ts",
     "generate": "prisma generate --config prisma.config.ts",
