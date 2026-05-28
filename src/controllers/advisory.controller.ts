@@ -49,9 +49,8 @@ export class AdvisoryController {
   });
 
   static getAllAdvisories = catchAsync(async (req: Request, res: Response) => {
-    const language =
-      typeof req.query.language === "string" ? req.query.language : undefined;
-    const advisories = await AdvisoryService.getAllAdvisories(language);
+    const lang = req.query.lang ? String(req.query.lang) : undefined;
+    const advisories = await AdvisoryService.getAllAdvisories(lang);
     return sendSuccess(res, advisories, "Advisories retrieved successfully");
   });
 

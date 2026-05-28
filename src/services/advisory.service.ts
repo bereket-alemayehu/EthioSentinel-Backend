@@ -13,7 +13,8 @@ import {
 import { EmailSender } from "../utils/EmailSender";
 import { SmsSender } from "../utils/SmsSender";
 import Logger from "../utils/logger";
-
+import { ChatService } from "./chat.service";
+  
 type SupportedLanguage = "ENGLISH" | "AMHARIC";
 
 type AdvisoryGenerationInput = {
@@ -47,6 +48,8 @@ type SymptomCheckerResult = {
   disclaimer: string;
   language: SupportedLanguage;
 };
+
+const translationCache = new Map<string, { title: string; content: string; publicContent: string }>();
 
 export class AdvisoryService {
   private static async notifyCitizensOnAdvisoryApproval(input: {
@@ -406,27 +409,11 @@ export class AdvisoryService {
     };
   }
 
-  private static normalizePublicLanguage(
-    language?: string,
-  ): SupportedLanguage | undefined {
-    if (!language?.trim()) return undefined;
-    const raw = language.trim().toUpperCase();
-    if (raw === "AM" || raw === "AMHARIC") return "AMHARIC";
-    if (raw === "EN" || raw === "ENGLISH") return "ENGLISH";
-    return undefined;
-  }
-
-  static async getAllAdvisories(language?: string) {
-    const preferred = this.normalizePublicLanguage(language);
-
-    const baseWhere = { status: AdvisoryStatus.APPROVED } as const;
-    const languageWhere = preferred
-      ? { ...baseWhere, language: preferred }
-      : baseWhere;
-
-    const fetchRows = (where: typeof languageWhere) =>
-      prisma.advisory.findMany({
-      where,
+  static async getAllAdvisories(lang?: string) {
+    const rows = await prisma.advisory.findMany({
+      where: {
+        status: AdvisoryStatus.APPROVED,
+      },
       select: {
         id: true,
         title: true,
@@ -467,12 +454,99 @@ export class AdvisoryService {
       },
     });
 
-    let rows = await fetchRows(languageWhere);
-    if (rows.length === 0 && preferred) {
-      rows = await fetchRows(baseWhere);
+    const enriched = rows.map((row) => this.withPublicAdvisoryContent(row));
+    const targetLang = (lang ?? "").trim().toUpperCase();
+
+    if (!targetLang) {
+      return enriched;
     }
 
-    return rows.map((row) => this.withPublicAdvisoryContent(row));
+    const needsTranslation: typeof enriched = [];
+    const results = enriched.map((row) => {
+      const sourceLang = String(row.language ?? "ENGLISH").trim().toUpperCase();
+      // Always translate unless both target and source are ENGLISH,
+      // because publicContent is always generated in English at read-time
+      if (!(targetLang === "ENGLISH" && sourceLang === "ENGLISH")) {
+        const cacheKey = `${row.id}_${targetLang}_${row.updatedAt.getTime()}`;
+        const cached = translationCache.get(cacheKey);
+        if (cached) {
+          return {
+            ...row,
+            title: cached.title,
+            content: cached.content,
+            publicContent: cached.publicContent,
+          };
+        } else {
+          needsTranslation.push(row);
+          return row;
+        }
+      }
+      return row;
+    });
+
+    if (needsTranslation.length > 0) {
+      Logger.info(`Translating ${needsTranslation.length} advisories to ${targetLang}`);
+
+      try {
+        // Build a compact payload — use index-based IDs to keep tokens small
+        const payload = needsTranslation.map((row, i) => ({
+          i,
+          t: row.title,
+          c: row.content,
+          p: row.publicContent,
+        }));
+
+        const prompt = `Translate every item in the JSON array below into ${targetLang === "AMHARIC" ? "Amharic (አማርኛ)" : targetLang} for an Ethiopian public audience.
+Rules:
+- Keep disease names and place names as-is.
+- Keep numbered lists.
+- Return ONLY a JSON array (no markdown fences). Each object must have keys: i, t, c, p (matching the input).
+
+${JSON.stringify(payload)}`;
+
+        const responseText = await ChatService.requestGeminiReply({ prompt });
+        const cleanJson = responseText
+          .replace(/^```json\s*/i, "")
+          .replace(/^```\s*/, "")
+          .replace(/```\s*$/, "")
+          .trim();
+
+        const translated = JSON.parse(cleanJson) as Array<{
+          i: number;
+          t: string;
+          c: string;
+          p: string;
+        }>;
+
+        for (const item of translated) {
+          const row = needsTranslation[item.i];
+          if (!row) continue;
+
+          const cacheKey = `${row.id}_${targetLang}_${row.updatedAt.getTime()}`;
+          translationCache.set(cacheKey, {
+            title: item.t,
+            content: item.c,
+            publicContent: item.p,
+          });
+
+          const idx = results.findIndex((r) => r.id === row.id);
+          if (idx !== -1) {
+            results[idx] = {
+              ...results[idx],
+              title: item.t,
+              content: item.c,
+              publicContent: item.p,
+            };
+          }
+        }
+
+        Logger.info(`Successfully translated ${translated.length} advisories to ${targetLang}`);
+      } catch (e) {
+        Logger.error(`Batch translation to ${targetLang} failed, returning untranslated content`, { error: e });
+      }
+    }
+
+    return results;
   }
 
   static async getAdvisoryById(advisoryId: string) {

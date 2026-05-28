@@ -188,7 +188,7 @@ import { ChatService } from "../services/chat.service";
  * Translate arbitrary user-facing text into a target language using Gemini.
  * Returns original text when target language is English or empty.
  */
-async function translateText(text: string, targetLang?: string): Promise<string> {
+export async function translateText(text: string, targetLang?: string): Promise<string> {
   const lang = (targetLang ?? "").trim();
   if (!lang) return text;
   const l = lang.toLowerCase();
