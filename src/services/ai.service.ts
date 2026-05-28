@@ -11,6 +11,7 @@ import {
   buildCitizenAlertMessage,
   buildCitizenAlertTitle,
   buildAdminSpikeSummary,
+  buildDetailedCitizenAdvisory,
 } from "../utils/healthMessaging";
 
 type WeeklyAggregate = {
@@ -358,16 +359,20 @@ Affected Area:
       const text = await ChatService.requestGeminiReply({ prompt });
       return text;
     } catch (e) {
-      Logger.error("Failed to generate advisory with Gemini, using fallback text", { error: e instanceof Error ? e.message : String(e) });
-      return [
-        `AI anomaly signal detected for ${input.diseaseType} in ${input.district}.`,
-        `Current cases: ${input.currentCases}; baseline mean: ${input.historicalMean.toFixed(2)}; z-score: ${z}.`,
-        "Suggested immediate actions:",
-        "1) Activate targeted community awareness in affected kebeles.",
-        "2) Increase case confirmation and triage at nearby health facilities.",
-        "3) Reinforce prevention supplies and rapid response follow-up.",
-        "This draft was generated automatically and requires ADMIN review before public broadcast.",
-      ].join("\n");
+      const errMsg = e instanceof Error ? e.message : String(e);
+      if (!errMsg.includes("GEMINI_QUOTA_EXCEEDED") && !errMsg.includes("429")) {
+        Logger.error("Failed to generate advisory with Gemini, using fallback text", {
+          error: errMsg,
+        });
+      } else {
+        Logger.warn("Gemini unavailable; using template advisory draft");
+      }
+      return buildDetailedCitizenAdvisory({
+        diseaseType: input.diseaseType,
+        district: input.district,
+        currentCases: input.currentCases,
+        riskLevel: "HIGH",
+      });
     }
   }
 

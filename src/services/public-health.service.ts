@@ -8,6 +8,7 @@ type OutbreakNewsItem = {
   title: string;
   summary: string;
   url: string;
+  imageUrl?: string;
   publishedAt: string | null;
   source: "WHO" | "WHO Africa" | "Google News";
   scope: "GLOBAL" | "AFRICA" | "ETHIOPIA";
@@ -120,6 +121,12 @@ function parseRssItems(xml: string): OutbreakNewsItem[] {
     const summary = extractReadableSummary(readTag("description"));
     const url = stripHtml(readTag("link"));
     const publishedAt = stripHtml(readTag("pubDate"));
+    const imageUrl = stripHtml(
+      item.match(/<media:content[^>]*url=["']([^"']+)["']/i)?.[1] ??
+        item.match(/<media:thumbnail[^>]*url=["']([^"']+)["']/i)?.[1] ??
+        item.match(/<enclosure[^>]*url=["']([^"']+)["']/i)?.[1] ??
+        "",
+    );
     const text = `${title} ${summary}`;
 
     return {
@@ -127,6 +134,7 @@ function parseRssItems(xml: string): OutbreakNewsItem[] {
       title,
       summary,
       url,
+      imageUrl: imageUrl || undefined,
       publishedAt: publishedAt ? new Date(publishedAt).toISOString() : null,
       source: "WHO Africa",
       scope: "AFRICA",
@@ -343,6 +351,13 @@ export class PublicHealthService {
           const summary = extractReadableSummary(item.Summary || item.Overview || item.Description);
           const published = String(item.PublicationDateAndTime || item.PublicationDate || item.LastModified || "");
           const urlName = String(item.UrlName || item.ItemDefaultUrl || item.DefaultUrl || "");
+          const imageUrl = stripHtml(
+            item.ThumbnailUrl ||
+              item.ImageUrl ||
+              item.Image ||
+              item.HeroImage ||
+              "",
+          );
           const url = urlName
             ? urlName.startsWith("http")
               ? urlName
@@ -354,6 +369,7 @@ export class PublicHealthService {
             title,
             summary,
             url,
+            imageUrl: imageUrl || undefined,
             publishedAt: published ? new Date(published).toISOString() : null,
             source: "WHO",
             scope: "GLOBAL",

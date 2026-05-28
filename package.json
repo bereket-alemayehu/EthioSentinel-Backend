@@ -11,6 +11,7 @@
     "dev:ai:win": "cd anomaly-detection-service && .venv\\Scripts\\python app.py",
     "dev:with-ai:win": "concurrently -n backend,ai -c cyan,magenta \"npm run dev\" \"npm run dev:ai:win\"",
     "build": "tsc",
+    "predev": "prisma generate --config prisma.config.ts",
     "postinstall": "prisma generate --config prisma.config.ts",
     "generate": "prisma generate --config prisma.config.ts",
     "db:migrate": "prisma migrate deploy --config prisma.config.ts",

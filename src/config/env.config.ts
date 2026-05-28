@@ -24,6 +24,8 @@ export const env = cleanEnv(process.env, {
   SMTP_PASS: str({ default: "" }),
   SMTP_FROM: str({ default: "noreply@ethiosentinel.local" }),
   BREVO_API_KEY: str({ default: "" }),
+  /** When true, emails are logged locally and not sent via Brevo (useful when IP is not whitelisted). */
+  EMAIL_DEV_LOG_ONLY: bool({ default: false }),
   /** Brevo SMTP tab login (required when BREVO_API_KEY is xsmtpsib-…). */
   BREVO_SMTP_LOGIN: str({ default: "" }),
   BREVO_SENDER_EMAIL: str({ default: "" }),

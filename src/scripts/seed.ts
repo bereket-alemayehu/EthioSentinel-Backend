@@ -6,9 +6,9 @@ import {
 } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { seedDiseases } from "./seed-diseases";
 import healthcenter, { seedHealthCenters } from "./seed.healthcenter";
-
 
 type DistrictSeed = {
   name: string;
@@ -26,33 +26,60 @@ type RegionSeed = {
 
 // Build regions/districts dynamically from the real health center seed data
 function slugCode(name: string, max = 4) {
-  return name
-    .replace(/[^a-zA-Z0-9 ]/g, "")
-    .split(/\s+/)
-    .map((w) => w[0] || "")
-    .join("")
-    .slice(0, max)
+  const cleaned = name
+    .normalize("NFKD")
+    .replace(/[^a-zA-Z0-9]+/g, "")
+    .toUpperCase();
+  return cleaned.slice(0, max) || "UNK";
+}
+
+function hashSuffix(input: string, size = 4) {
+  return crypto
+    .createHash("md5")
+    .update(input)
+    .digest("hex")
+    .slice(0, size)
     .toUpperCase();
 }
 
-function buildRegionsFromHealthCenter(): RegionSeed[] {
-  const map = new Map<string, { name: string; code: string; primaryLanguage: Language; districts: Map<string, DistrictSeed> }>();
+function normalizeRegionName(raw: string) {
+  const name = raw.trim();
+  const lowered = name.toLowerCase();
+  if (lowered === "amahara") return "Amhara";
+  return name;
+}
 
-  for (const item of (healthcenter as any[])) {
-    const regionName = (item.Region || "").toString().trim();
+function buildRegionsFromHealthCenter(): RegionSeed[] {
+  const map = new Map<
+    string,
+    {
+      name: string;
+      code: string;
+      primaryLanguage: Language;
+      districts: Map<string, DistrictSeed>;
+    }
+  >();
+
+  for (const item of healthcenter as any[]) {
+    const regionName = normalizeRegionName((item.Region || "").toString());
     if (!regionName) continue;
     const woreda = (item.Woreda || "").toString().trim();
     const y = Number(item.Y);
     const x = Number(item.X);
 
     if (!map.has(regionName)) {
-      map.set(regionName, { name: regionName, code: slugCode(regionName, 4), primaryLanguage: Language.AMHARIC, districts: new Map() });
+      map.set(regionName, {
+        name: regionName,
+        code: slugCode(regionName, 4),
+        primaryLanguage: Language.AMHARIC,
+        districts: new Map(),
+      });
     }
 
     if (woreda) {
       const region = map.get(regionName)!;
       if (!region.districts.has(woreda)) {
-        const districtCode = `${region.code}-${slugCode(woreda, 3)}`;
+        const districtCode = `${region.code}-${slugCode(woreda, 12)}-${hashSuffix(`${region.name}:${woreda}`)}`;
         region.districts.set(woreda, {
           name: woreda,
           code: districtCode,
@@ -63,7 +90,12 @@ function buildRegionsFromHealthCenter(): RegionSeed[] {
     }
   }
 
-  return Array.from(map.values()).map((r) => ({ name: r.name, code: r.code, primaryLanguage: r.primaryLanguage, districts: Array.from(r.districts.values()) }));
+  return Array.from(map.values()).map((r) => ({
+    name: r.name,
+    code: r.code,
+    primaryLanguage: r.primaryLanguage,
+    districts: Array.from(r.districts.values()),
+  }));
 }
 
 const ethiopiaRegions: RegionSeed[] = buildRegionsFromHealthCenter();
@@ -240,11 +272,11 @@ async function seedUsers() {
 async function seedAlerts() {
   const admin = await prisma.user.findFirst({ where: { role: Role.ADMIN } });
   // Include districts in the fetch so we can link them
-  const regions = await prisma.region.findMany({ 
+  const regions = await prisma.region.findMany({
     take: 3,
-    include: { districts: true }
+    include: { districts: true },
   });
-  
+
   if (!admin || regions.length === 0) {
     console.log("⚠️ Skipping alert seeding: Admin or Regions not found.");
     return;
@@ -259,11 +291,13 @@ async function seedAlerts() {
     {
       targetZone: "Addis Ababa",
       title: "Malaria Outbreak Warning",
-      message: "Increased malaria cases detected in Addis Ababa. Please take precautions.",
+      message:
+        "Increased malaria cases detected in Addis Ababa. Please take precautions.",
       severity: "HIGH" as const,
       disease: "Malaria",
       status: "Awaiting Review",
-      advisoryContent: "Use bed nets, clear standing water, and seek medical attention if fever persists."
+      advisoryContent:
+        "Use bed nets, clear standing water, and seek medical attention if fever persists.",
     },
     {
       targetZone: "Dire Dawa",
@@ -272,7 +306,8 @@ async function seedAlerts() {
       severity: "CRITICAL" as const,
       disease: "Cholera",
       status: "Approved",
-      advisoryContent: "Wash hands frequently, use treated water, and report symptoms immediately."
+      advisoryContent:
+        "Wash hands frequently, use treated water, and report symptoms immediately.",
     },
     {
       targetZone: "Gondar",
@@ -281,13 +316,17 @@ async function seedAlerts() {
       severity: "MEDIUM" as const,
       disease: "Measles",
       status: "Awaiting Review",
-      advisoryContent: "Vaccination drive starting Monday. Keep children home if they show rash or fever."
-    }
+      advisoryContent:
+        "Vaccination drive starting Monday. Keep children home if they show rash or fever.",
+    },
   ];
 
   for (const a of sampleAlerts) {
     const region = regions[Math.floor(Math.random() * regions.length)];
-    const district = region.districts && region.districts.length > 0 ? region.districts[0] : null;
+    const district =
+      region.districts && region.districts.length > 0
+        ? region.districts[0]
+        : null;
 
     // 1. Create a linked Advisory Draft
     const advisory = await prisma.advisory.create({
@@ -299,9 +338,14 @@ async function seedAlerts() {
         districtId: district?.id || null,
         language: "ENGLISH",
         status: a.status === "Approved" ? "APPROVED" : "DRAFT",
-        riskLevel: a.severity === "CRITICAL" ? "CRITICAL" : a.severity === "HIGH" ? "HIGH" : "MODERATE",
-        generatedByAI: true
-      }
+        riskLevel:
+          a.severity === "CRITICAL"
+            ? "CRITICAL"
+            : a.severity === "HIGH"
+              ? "HIGH"
+              : "MODERATE",
+        generatedByAI: true,
+      },
     });
 
     // 2. Create the Alert
@@ -314,8 +358,8 @@ async function seedAlerts() {
         channel: "WEB",
         isDelivered: a.status === "Approved",
         advisoryId: advisory.id,
-        aiSuggested: true
-      }
+        aiSuggested: true,
+      },
     });
   }
 
@@ -378,7 +422,9 @@ async function seedAnomalyDemoData() {
     });
   }
 
-  console.log("✅ Seeded anomaly demo data (time-series reports + ANOMALY signals)");
+  console.log(
+    "✅ Seeded anomaly demo data (time-series reports + ANOMALY signals)",
+  );
 }
 
 async function main() {
@@ -397,8 +443,8 @@ async function main() {
   // await seedReports();
   // console.log("✅ Seeded sample disease reports");
 
-    // await seedAlerts();
-    // console.log("✅ Seeded sample alerts for approval");
+  // await seedAlerts();
+  // console.log("✅ Seeded sample alerts for approval");
 
   // await seedAnomalyDemoData();
 }
