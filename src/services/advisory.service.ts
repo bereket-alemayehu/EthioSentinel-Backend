@@ -9,12 +9,13 @@ import {
   buildCitizenSmsAlert,
   enrichCitizenAdvisoryContent,
   sanitizePublicHealthText,
+  translateText,
 } from "../utils/healthMessaging";
 import { EmailSender } from "../utils/EmailSender";
 import { SmsSender } from "../utils/SmsSender";
 import Logger from "../utils/logger";
 import { ChatService } from "./chat.service";
-  
+
 type SupportedLanguage = "ENGLISH" | "AMHARIC";
 
 type AdvisoryGenerationInput = {
@@ -183,7 +184,7 @@ export class AdvisoryService {
     return normalized as T;
   }
 
-  static checkSymptoms(data: SymptomCheckerInput): SymptomCheckerResult {
+  static async checkSymptoms(data: SymptomCheckerInput): Promise<SymptomCheckerResult> {
     const symptomsRaw = Array.isArray(data.symptoms) ? data.symptoms : [];
     const selectedSymptoms = symptomsRaw
       .map((item) => String(item).trim().toLowerCase())
@@ -207,72 +208,122 @@ export class AdvisoryService {
     const language = languageRaw as SupportedLanguage;
     const location = String(data.location ?? "your area").trim() || "your area";
 
-    const hasFever = selectedSymptoms.includes("fever");
-    const hasCough = selectedSymptoms.includes("cough");
-    const hasDiarrhea = selectedSymptoms.includes("diarrhea");
-    const hasVomiting = selectedSymptoms.includes("vomiting");
-    const hasHeadache = selectedSymptoms.includes("headache");
-    const hasBodyPain = selectedSymptoms.includes("body pain");
+    try {
+      const prompt = `You are an expert AI clinical symptom analyzer for the EthioSentinel public health platform in Ethiopia.
+Analyze the following symptoms reported by a user in the location "${location}":
+Symptoms: ${selectedSymptoms.join(", ")}
 
-    let probableDisease = "General febrile illness";
-    let riskLevel: "LOW" | "MODERATE" | "HIGH" = "LOW";
+Respond only in ${language === "AMHARIC" ? "Amharic (አማርኛ) using Ethiopic Unicode script" : "English"}.
+Provide:
+1. probableDisease: A clear, plain-language name of the most likely disease/illness category. Keep it safe and descriptive (e.g., "Malaria-like illness", "Cholera-like illness", etc.).
+2. riskLevel: Must be exactly one of: "LOW", "MODERATE", or "HIGH".
+3. advice: Practical, actionable advice for the user based on their symptoms, including whether they should seek immediate care or home care, referencing their location "${location}" if appropriate. Keep it concise.
+4. disclaimer: A clear medical disclaimer stating that this is for guidance only and not a medical diagnosis, and to consult a professional.
 
-    if ((hasFever && hasDiarrhea) || (hasVomiting && hasDiarrhea)) {
-      probableDisease = "Cholera-like illness";
-      riskLevel = "HIGH";
-    } else if (hasFever && hasHeadache && hasBodyPain) {
-      probableDisease = "Malaria-like illness";
-      riskLevel = "MODERATE";
-    } else if (hasFever && hasCough) {
-      probableDisease = "Respiratory infection";
-      riskLevel = "MODERATE";
-    }
+Return ONLY a raw JSON object with the following schema, without any markdown formatting or code blocks:
+{
+  "probableDisease": "string",
+  "riskLevel": "LOW" | "MODERATE" | "HIGH",
+  "advice": "string",
+  "disclaimer": "string"
+}`;
 
-    const adviceEn =
-      riskLevel === "HIGH"
-        ? `High risk signs detected for ${location}. Seek immediate care at the nearest health facility and avoid dehydration.`
-        : riskLevel === "MODERATE"
-          ? `Moderate risk signs detected for ${location}. Visit a health center soon for clinical assessment.`
-          : `Low risk signs detected for ${location}. Rest, hydrate, and monitor symptoms. Seek care if symptoms worsen.`;
+      const responseText = await ChatService.requestGeminiReply({ prompt });
+      const cleanJson = responseText
+        .replace(/^```json\s*/i, "")
+        .replace(/^```\s*/, "")
+        .replace(/```\s*$/, "")
+        .trim();
 
-    const disclaimerEn =
-      "This symptom checker is for guidance only and is not a medical diagnosis. Please consult a healthcare professional.";
+      const aiResult = JSON.parse(cleanJson) as {
+        probableDisease: string;
+        riskLevel: string;
+        advice: string;
+        disclaimer: string;
+      };
 
-    if (language === "AMHARIC") {
-      const probableDiseaseAm =
-        probableDisease === "Cholera-like illness"
-          ? "የኮሌራ ዓይነት ህመም"
-          : probableDisease === "Malaria-like illness"
-            ? "የወባ ዓይነት ህመም"
-            : probableDisease === "Respiratory infection"
-              ? "የመተንፈሻ አካል ኢንፌክሽን"
-              : "አጠቃላይ ትኩሳት ያለው ህመም";
-      const adviceAm =
-        riskLevel === "HIGH"
-          ? `${location} ለሚመለከት ከፍተኛ አደጋ ምልክቶች ተገኝተዋል። በቅርብ ያለ የጤና ተቋም አስቸኳይ ሕክምና ይፈልጉ፣ የውሃ እጥረትንም ይከላከሉ።`
-          : riskLevel === "MODERATE"
-            ? `${location} ለሚመለከት መጠነኛ አደጋ ምልክቶች ተገኝተዋል። በቅርብ ጊዜ ወደ ጤና ማዕከል በመሄድ ምርመራ ያድርጉ።`
-            : `${location} ለሚመለከት ዝቅተኛ አደጋ ምልክቶች ተገኝተዋል። ዕረፍት ያድርጉ፣ በቂ ውሃ ይጠጡ፣ ምልክቶችን ይከታተሉ። ከባድ ከሆነ ወደ ሕክምና ይሂዱ።`;
-      const disclaimerAm =
-        "ይህ የምልክት ምርመራ ለመመሪያ ብቻ ነው፤ የሕክምና ምርመራ አይደለም። እባክዎ የጤና ባለሙያን ያማክሩ።";
+      const normalizedRisk = (aiResult.riskLevel ?? "LOW").toUpperCase();
+      const riskLevel: "LOW" | "MODERATE" | "HIGH" =
+        normalizedRisk === "HIGH" ? "HIGH" : normalizedRisk === "MODERATE" ? "MODERATE" : "LOW";
+
       return {
         selectedSymptoms,
-        probableDisease: probableDiseaseAm,
+        probableDisease: aiResult.probableDisease ?? (language === "AMHARIC" ? "አጠቃላይ ህመም" : "General illness"),
         riskLevel,
-        advice: adviceAm,
-        disclaimer: disclaimerAm,
+        advice: aiResult.advice ?? (language === "AMHARIC" ? "እባክዎ ጤና ባለሙያ ያማክሩ።" : "Please consult a health professional."),
+        disclaimer: aiResult.disclaimer ?? (language === "AMHARIC" ? "ይህ ለመመሪያ ብቻ ነው።" : "This symptom checker is for guidance only."),
+        language,
+      };
+    } catch (error) {
+      Logger.error("AI Symptom Checker failed, falling back to rule-based checker", { error });
+
+      const hasFever = selectedSymptoms.includes("fever");
+      const hasCough = selectedSymptoms.includes("cough");
+      const hasDiarrhea = selectedSymptoms.includes("diarrhea");
+      const hasVomiting = selectedSymptoms.includes("vomiting");
+      const hasHeadache = selectedSymptoms.includes("headache");
+      const hasBodyPain = selectedSymptoms.includes("body pain");
+
+      let probableDisease = "General febrile illness";
+      let riskLevel: "LOW" | "MODERATE" | "HIGH" = "LOW";
+
+      if ((hasFever && hasDiarrhea) || (hasVomiting && hasDiarrhea)) {
+        probableDisease = "Cholera-like illness";
+        riskLevel = "HIGH";
+      } else if (hasFever && hasHeadache && hasBodyPain) {
+        probableDisease = "Malaria-like illness";
+        riskLevel = "MODERATE";
+      } else if (hasFever && hasCough) {
+        probableDisease = "Respiratory infection";
+        riskLevel = "MODERATE";
+      }
+
+      const adviceEn =
+        riskLevel === "HIGH"
+          ? `High risk signs detected for ${location}. Seek immediate care at the nearest health facility and avoid dehydration.`
+          : riskLevel === "MODERATE"
+            ? `Moderate risk signs detected for ${location}. Visit a health center soon for clinical assessment.`
+            : `Low risk signs detected for ${location}. Rest, hydrate, and monitor symptoms. Seek care if symptoms worsen.`;
+
+      const disclaimerEn =
+        "This symptom checker is for guidance only and is not a medical diagnosis. Please consult a healthcare professional.";
+
+      if (language === "AMHARIC") {
+        const probableDiseaseAm =
+          probableDisease === "Cholera-like illness"
+            ? "የኮሌራ ዓይነት ህመም"
+            : probableDisease === "Malaria-like illness"
+              ? "የወባ ዓይነት ህመም"
+              : probableDisease === "Respiratory infection"
+                ? "የመተንፈሻ አካል ኢንፌክሽን"
+                : "አጠቃላይ ትኩሳት ያለው ህመም";
+        const adviceAm =
+          riskLevel === "HIGH"
+            ? `${location} ለሚመለከት ከፍተኛ አደጋ ምልክቶች ተገኝተዋል። በቅርብ ያለ የጤና ተቋም አስቸኳይ ሕክምና ይፈልጉ፣ የውሃ እጥረትንም ይከላከሉ።`
+            : riskLevel === "MODERATE"
+              ? `${location} ለሚመለከት መጠነኛ አደጋ ምልክቶች ተገኝተዋል። በቅርብ ጊዜ ወደ ጤና ማዕከል በመሄድ ምርመራ ያድርጉ።`
+              : `${location} ለሚመለከት ዝቅተኛ አደጋ ምልክቶች ተገኝተዋል። ዕረፍት ያድርጉ፣ በቂ ውሃ ይጠጡ፣ ምልክቶችን ይከታተሉ። ከባድ ከሆነ ወደ ሕክምና ይሂዱ።`;
+        const disclaimerAm =
+          "ይህ የምልክት ምርመራ ለመመሪያ ብቻ ነው፤ የሕክምና ምርመራ አይደለም። እባክዎ የጤና ባለሙያን ያማክሩ።";
+        return {
+          selectedSymptoms,
+          probableDisease: probableDiseaseAm,
+          riskLevel,
+          advice: adviceAm,
+          disclaimer: disclaimerAm,
+          language,
+        };
+      }
+
+      return {
+        selectedSymptoms,
+        probableDisease,
+        riskLevel,
+        advice: adviceEn,
+        disclaimer: disclaimerEn,
         language,
       };
     }
-
-    return {
-      selectedSymptoms,
-      probableDisease,
-      riskLevel,
-      advice: adviceEn,
-      disclaimer: disclaimerEn,
-      language,
-    };
   }
 
   static generateHealthAdvisoryText(
@@ -455,98 +506,56 @@ export class AdvisoryService {
     });
 
     const enriched = rows.map((row) => this.withPublicAdvisoryContent(row));
+
     const targetLang = (lang ?? "").trim().toUpperCase();
 
-    if (!targetLang) {
-      return enriched;
-    }
+    const translatedRows = await Promise.all(
+      enriched.map(async (row) => {
+        const sourceLang = String(row.language ?? "ENGLISH").trim().toUpperCase();
 
-    const needsTranslation: typeof enriched = [];
-    const results = enriched.map((row) => {
-      const sourceLang = String(row.language ?? "ENGLISH").trim().toUpperCase();
-      // Always translate unless both target and source are ENGLISH,
-      // because publicContent is always generated in English at read-time
-      if (!(targetLang === "ENGLISH" && sourceLang === "ENGLISH")) {
-        const cacheKey = `${row.id}_${targetLang}_${row.updatedAt.getTime()}`;
-        const cached = translationCache.get(cacheKey);
-        if (cached) {
-          return {
-            ...row,
-            title: cached.title,
-            content: cached.content,
-            publicContent: cached.publicContent,
-          };
-        } else {
-          needsTranslation.push(row);
-          return row;
-        }
-      }
-      return row;
-    });
-
-    if (needsTranslation.length > 0) {
-      Logger.info(`Translating ${needsTranslation.length} advisories to ${targetLang}`);
-
-      try {
-        // Build a compact payload — use index-based IDs to keep tokens small
-        const payload = needsTranslation.map((row, i) => ({
-          i,
-          t: row.title,
-          c: row.content,
-          p: row.publicContent,
-        }));
-
-        const prompt = `Translate every item in the JSON array below into ${targetLang === "AMHARIC" ? "Amharic (አማርኛ)" : targetLang} for an Ethiopian public audience.
-Rules:
-- Keep disease names and place names as-is.
-- Keep numbered lists.
-- Return ONLY a JSON array (no markdown fences). Each object must have keys: i, t, c, p (matching the input).
-
-${JSON.stringify(payload)}`;
-
-        const responseText = await ChatService.requestGeminiReply({ prompt });
-        const cleanJson = responseText
-          .replace(/^```json\s*/i, "")
-          .replace(/^```\s*/, "")
-          .replace(/```\s*$/, "")
-          .trim();
-
-        const translated = JSON.parse(cleanJson) as Array<{
-          i: number;
-          t: string;
-          c: string;
-          p: string;
-        }>;
-
-        for (const item of translated) {
-          const row = needsTranslation[item.i];
-          if (!row) continue;
-
+        if (targetLang && targetLang !== sourceLang) {
           const cacheKey = `${row.id}_${targetLang}_${row.updatedAt.getTime()}`;
-          translationCache.set(cacheKey, {
-            title: item.t,
-            content: item.c,
-            publicContent: item.p,
-          });
+          const cached = translationCache.get(cacheKey);
 
-          const idx = results.findIndex((r) => r.id === row.id);
-          if (idx !== -1) {
-            results[idx] = {
-              ...results[idx],
-              title: item.t,
-              content: item.c,
-              publicContent: item.p,
+          if (cached) {
+            return {
+              ...row,
+              title: cached.title,
+              content: cached.content,
+              publicContent: cached.publicContent,
             };
+          } else {
+            try {
+              const [translatedTitle, translatedContent, translatedPublicContent] = await Promise.all([
+                translateText(row.title, targetLang),
+                translateText(row.content, targetLang),
+                translateText(row.publicContent, targetLang),
+              ]);
+
+              translationCache.set(cacheKey, {
+                title: translatedTitle,
+                content: translatedContent,
+                publicContent: translatedPublicContent,
+              });
+
+              return {
+                ...row,
+                title: translatedTitle,
+                content: translatedContent,
+                publicContent: translatedPublicContent,
+              };
+            } catch (e) {
+              Logger.error(`Failed to translate advisory ${row.id} to ${targetLang}`, { error: e });
+              return row;
+            }
           }
         }
 
-        Logger.info(`Successfully translated ${translated.length} advisories to ${targetLang}`);
-      } catch (e) {
-        Logger.error(`Batch translation to ${targetLang} failed, returning untranslated content`, { error: e });
-      }
-    }
+        return row;
+      })
+    );
 
-    return results;
+    return translatedRows;
   }
 
   static async getAdvisoryById(advisoryId: string) {
