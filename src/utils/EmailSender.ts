@@ -50,6 +50,9 @@ type SpikeAlertEmailPayload = {
 };
 
 export class EmailSender {
+  /** Set after a non-retryable Brevo error (e.g. IP not whitelisted) to avoid log spam. */
+  private static brevoDeliverySuspended = false;
+
   subject: string;
   htmlContent: string;
   sender: { email: string; name?: string };
@@ -105,8 +108,46 @@ export class EmailSender {
     return this.stripEnvQuotes(login);
   }
 
+  private static emailErrorText(error: unknown): string {
+    const err = error as { message?: string; body?: { message?: string }; response?: { data?: { message?: string } } };
+    return [
+      error instanceof Error ? error.message : String(error),
+      err.body?.message,
+      err.response?.data?.message,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  private static isNonRetryableBrevoError(error: unknown): boolean {
+    const errText = this.emailErrorText(error);
+    return (
+      errText.includes("unrecognised IP") ||
+      errText.includes("Unauthorized IP") ||
+      errText.includes("Key not found") ||
+      errText.includes("invalid API key") ||
+      errText.includes("API key is not enabled")
+    );
+  }
+
+  private static suspendBrevoDelivery(error: unknown) {
+    if (this.brevoDeliverySuspended) return;
+    this.brevoDeliverySuspended = true;
+    this.logBrevoFailureHint(error);
+    if (env.NODE_ENV !== "production") {
+      Logger.warn(
+        "Further emails this session will be logged only (not sent). " +
+          "Set EMAIL_DEV_LOG_ONLY=true to skip Brevo intentionally, or whitelist your IP in Brevo → Security.",
+      );
+    }
+  }
+
+  private static shouldSkipBrevoDelivery(): boolean {
+    return env.EMAIL_DEV_LOG_ONLY || this.brevoDeliverySuspended;
+  }
+
   private static logBrevoFailureHint(error: unknown) {
-    const errText = error instanceof Error ? error.message : String(error);
+    const errText = this.emailErrorText(error);
     if (errText.includes("Key not found")) {
       Logger.error(
         "Brevo rejected the API key. Use an xkeysib- REST key from Brevo → SMTP & API → API Keys, " +
@@ -116,7 +157,8 @@ export class EmailSender {
     }
     if (errText.includes("unrecognised IP") || errText.includes("Unauthorized IP")) {
       Logger.error(
-        "Brevo blocked this server IP. Add your IP under Brevo → Security → Authorized IPs, or disable IP restriction.",
+        "Brevo blocked this server IP. Add your IP under Brevo → Security → Authorized IPs, " +
+          "disable IP restriction, or set EMAIL_DEV_LOG_ONLY=true in .env for local development.",
       );
       return;
     }
@@ -279,21 +321,29 @@ export class EmailSender {
     }
 
     const sender = this.getSender();
-    if (!this.isBrevoConfigured()) {
-      Logger.warn("Brevo not configured; bulk emails skipped", {
-        recipients: uniqueRecipients.length,
-        subject: input.subject,
-      });
+    if (!this.isBrevoConfigured() || this.shouldSkipBrevoDelivery()) {
+      if (this.shouldSkipBrevoDelivery() && this.isBrevoConfigured()) {
+        Logger.warn("Brevo delivery suspended; logging email locally", {
+          recipients: uniqueRecipients.length,
+          subject: input.subject,
+        });
+      } else {
+        Logger.warn("Brevo not configured; bulk emails skipped", {
+          recipients: uniqueRecipients.length,
+          subject: input.subject,
+        });
+      }
       this.logDevelopmentFallback({
         title: input.fallbackTitle,
         to: uniqueRecipients,
         subject: input.subject,
         html: input.html,
       });
+      const devOk = env.NODE_ENV !== "production";
       return {
         attempted: uniqueRecipients.length,
-        delivered: 0,
-        failed: uniqueRecipients.length,
+        delivered: devOk ? uniqueRecipients.length : 0,
+        failed: devOk ? 0 : uniqueRecipients.length,
       };
     }
 
@@ -316,6 +366,21 @@ export class EmailSender {
           failed: 0,
         };
       } catch (error: any) {
+        if (this.isNonRetryableBrevoError(error)) {
+          this.suspendBrevoDelivery(error);
+          this.logDevelopmentFallback({
+            title: input.fallbackTitle,
+            to: uniqueRecipients,
+            subject: input.subject,
+            html: input.html,
+          });
+          const devOk = env.NODE_ENV !== "production";
+          return {
+            attempted: uniqueRecipients.length,
+            delivered: devOk ? uniqueRecipients.length : 0,
+            failed: devOk ? 0 : uniqueRecipients.length,
+          };
+        }
         Logger.error("Brevo bulk email attempt failed", {
           subject: input.subject,
           attempt,
@@ -331,10 +396,28 @@ export class EmailSender {
     let delivered = 0;
     let failed = 0;
     for (const recipient of uniqueRecipients) {
+      if (this.shouldSkipBrevoDelivery()) {
+        break;
+      }
       try {
         await sendToRecipients([recipient]);
         delivered += 1;
       } catch (error: any) {
+        if (this.isNonRetryableBrevoError(error)) {
+          this.suspendBrevoDelivery(error);
+          this.logDevelopmentFallback({
+            title: input.fallbackTitle,
+            to: uniqueRecipients,
+            subject: input.subject,
+            html: input.html,
+          });
+          const devOk = env.NODE_ENV !== "production";
+          return {
+            attempted: uniqueRecipients.length,
+            delivered: devOk ? uniqueRecipients.length : 0,
+            failed: devOk ? 0 : uniqueRecipients.length,
+          };
+        }
         failed += 1;
         Logger.error("Brevo single-recipient email failed", {
           subject: input.subject,

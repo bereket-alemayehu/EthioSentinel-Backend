@@ -406,11 +406,27 @@ export class AdvisoryService {
     };
   }
 
-  static async getAllAdvisories() {
-    const rows = await prisma.advisory.findMany({
-      where: {
-        status: AdvisoryStatus.APPROVED,
-      },
+  private static normalizePublicLanguage(
+    language?: string,
+  ): SupportedLanguage | undefined {
+    if (!language?.trim()) return undefined;
+    const raw = language.trim().toUpperCase();
+    if (raw === "AM" || raw === "AMHARIC") return "AMHARIC";
+    if (raw === "EN" || raw === "ENGLISH") return "ENGLISH";
+    return undefined;
+  }
+
+  static async getAllAdvisories(language?: string) {
+    const preferred = this.normalizePublicLanguage(language);
+
+    const baseWhere = { status: AdvisoryStatus.APPROVED } as const;
+    const languageWhere = preferred
+      ? { ...baseWhere, language: preferred }
+      : baseWhere;
+
+    const fetchRows = (where: typeof languageWhere) =>
+      prisma.advisory.findMany({
+      where,
       select: {
         id: true,
         title: true,
@@ -450,6 +466,12 @@ export class AdvisoryService {
         createdAt: "desc",
       },
     });
+
+    let rows = await fetchRows(languageWhere);
+    if (rows.length === 0 && preferred) {
+      rows = await fetchRows(baseWhere);
+    }
+
     return rows.map((row) => this.withPublicAdvisoryContent(row));
   }
 

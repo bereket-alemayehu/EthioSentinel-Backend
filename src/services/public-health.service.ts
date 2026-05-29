@@ -8,6 +8,7 @@ type OutbreakNewsItem = {
   title: string;
   summary: string;
   url: string;
+  imageUrl?: string;
   publishedAt: string | null;
   source: "WHO" | "WHO Africa" | "Google News";
   scope: "GLOBAL" | "AFRICA" | "ETHIOPIA";
@@ -117,9 +118,20 @@ function parseRssItems(xml: string): OutbreakNewsItem[] {
       return tagMatch?.[1]?.replace(/^<!\[CDATA\[|\]\]>$/g, "") ?? "";
     };
     const title = stripHtml(readTag("title"));
-    const summary = extractReadableSummary(readTag("description"));
+    const rawDescription = readTag("description");
+    const summary = extractReadableSummary(rawDescription);
     const url = stripHtml(readTag("link"));
     const publishedAt = stripHtml(readTag("pubDate"));
+    const imageFromDescription = stripHtml(
+      rawDescription.match(/<img[^>]*src=["']([^"']+)["']/i)?.[1] ?? "",
+    );
+    const imageUrl = stripHtml(
+      item.match(/<media:content[^>]*url=["']([^"']+)["']/i)?.[1] ??
+        item.match(/<media:thumbnail[^>]*url=["']([^"']+)["']/i)?.[1] ??
+        item.match(/<enclosure[^>]*url=["']([^"']+)["']/i)?.[1] ??
+        imageFromDescription ??
+        "",
+    );
     const text = `${title} ${summary}`;
 
     return {
@@ -127,6 +139,7 @@ function parseRssItems(xml: string): OutbreakNewsItem[] {
       title,
       summary,
       url,
+      imageUrl: imageUrl || undefined,
       publishedAt: publishedAt ? new Date(publishedAt).toISOString() : null,
       source: "WHO Africa",
       scope: "AFRICA",
@@ -343,6 +356,13 @@ export class PublicHealthService {
           const summary = extractReadableSummary(item.Summary || item.Overview || item.Description);
           const published = String(item.PublicationDateAndTime || item.PublicationDate || item.LastModified || "");
           const urlName = String(item.UrlName || item.ItemDefaultUrl || item.DefaultUrl || "");
+          const imageUrl = stripHtml(
+            item.ThumbnailUrl ||
+              item.ImageUrl ||
+              item.Image ||
+              item.HeroImage ||
+              "",
+          );
           const url = urlName
             ? urlName.startsWith("http")
               ? urlName
@@ -354,6 +374,7 @@ export class PublicHealthService {
             title,
             summary,
             url,
+            imageUrl: imageUrl || undefined,
             publishedAt: published ? new Date(published).toISOString() : null,
             source: "WHO",
             scope: "GLOBAL",

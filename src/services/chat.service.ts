@@ -3,6 +3,7 @@ import { env } from "../config/env.config";
 import { AppError } from "../utils/AppError";
 import Logger from "../utils/logger";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { sanitizePublicHealthText } from "../utils/healthMessaging";
 
 type AppLanguage = "ENGLISH" | "AMHARIC";
 
@@ -60,15 +61,240 @@ type UserDiseaseContext = {
   }>;
 };
 
-const SYSTEM_PROMPT = `You are ${env.CHAT_BOT_NAME} for Ethiopia public health use cases.
-- Give concise, practical, safe health guidance.
-- You are not a doctor; always include a short medical disclaimer.
-- Use prior chat history to personalize replies for this user.
-- The JSON blocks in the prompt are live summaries from the EthioSentinel database for this user's area ONLY. When the user asks about local spikes, trends, or what is happening nearby, summarize those facts clearly (diseases, rough counts, anomalies with z-scores if present). Never invent case numbers or alerts not present in the JSON.
-- If severe symptoms are reported, advise urgent facility visit.
-- Never invent numbers that are not in provided context.`;
+const SYSTEM_PROMPT = `You are ${env.CHAT_BOT_NAME}, a community health assistant for Ethiopia.
+- Keep every reply SHORT: at most 2–3 short sentences OR up to 3 brief bullet lines.
+- Give practical, safe guidance. You are not a doctor; one short disclaimer when needed.
+- JSON blocks are live summaries for this user's area ONLY. Summarize diseases and counts; say "higher than usual" or "being monitored" — never mention z-scores, anomaly detection, or baselines.
+- Say "health guidance" not "advisory". For severe symptoms, advise urgent facility visit in one line.
+- Never invent numbers not in the JSON.`;
+
+const CHAT_FORBIDDEN_TERMS =
+  /\b(z-?score|anomaly detection|anomaly signal|baseline mean|AI draft|advisory pipeline)\b/gi;
 
 export class ChatService {
+  /** After a 429, skip further Gemini calls until the server restarts. */
+  private static geminiQuotaBlocked = false;
+
+  private static isGeminiQuotaError(error: unknown): boolean {
+    const msg = error instanceof Error ? error.message : String(error);
+    return msg.includes("GEMINI_QUOTA_EXCEEDED") || msg.includes("429");
+  }
+
+  private static sanitizeChatReply(text: string): string {
+    const cleaned = sanitizePublicHealthText(text)
+      .replace(/\badvisory\b/gi, "health guidance")
+      .replace(/\badvisories\b/gi, "health updates")
+      .replace(CHAT_FORBIDDEN_TERMS, "unusual illness activity")
+      .trim();
+    const brief = cleaned || text.trim();
+    const maxLen = 480;
+    if (brief.length <= maxLen) return brief;
+    const cut = brief.slice(0, maxLen);
+    const lastStop = Math.max(cut.lastIndexOf("."), cut.lastIndexOf("።"));
+    return (lastStop > 80 ? cut.slice(0, lastStop + 1) : `${cut}…`).trim();
+  }
+
+  private static formatAreaActivityForChat(
+    rows: Array<{
+      district: string;
+      diseaseType: string;
+      currentCases: number;
+      zScore: number | null;
+      createdAt: Date;
+    }>,
+  ) {
+    return rows.map((row) => ({
+      area: row.district,
+      disease: row.diseaseType,
+      recentCases: Math.round(row.currentCases),
+      concern:
+        row.zScore != null && row.zScore >= 2
+          ? "higher than usual"
+          : "being monitored",
+    }));
+  }
+
+  private static formatGuidanceForChat(
+    rows: UserDiseaseContext["advisories"],
+  ) {
+    return rows.map((row) => ({
+      disease: row.diseaseType,
+      riskLevel: row.riskLevel,
+      headline: row.title.replace(/^AI\s*Draft:\s*/i, "").trim(),
+    }));
+  }
+
+  private static resolveEffectiveLanguage(
+    message: string,
+    preferred?: string,
+  ): AppLanguage {
+    const msg = message.trim();
+    if (/[\u1200-\u137F]/.test(msg)) {
+      return "AMHARIC";
+    }
+    const lower = msg.toLowerCase();
+    if (
+      this.containsAny(lower, [
+        "speak amharic",
+        "speak in amharic",
+        "in amharic",
+        "use amharic",
+        "reply in amharic",
+        "amharic please",
+        "please speak in amharic",
+        "talk in amharic",
+      ])
+    ) {
+      return "AMHARIC";
+    }
+    if (
+      this.containsAny(lower, [
+        "speak english",
+        "speak in english",
+        "in english",
+        "reply in english",
+      ])
+    ) {
+      return "ENGLISH";
+    }
+    return this.mapLanguage(preferred);
+  }
+
+  private static isLanguagePreferenceRequest(text: string): boolean {
+    const lower = text.toLowerCase();
+    if (/[\u1200-\u137F]/.test(text)) {
+      return this.containsAny(lower, ["አማርኛ", "ብቻ", "ተናገር", "መልስ"]);
+    }
+    return this.containsAny(lower, [
+      "speak amharic",
+      "speak in amharic",
+      "in amharic",
+      "use amharic",
+      "reply in amharic",
+      "amharic please",
+      "please speak in amharic",
+      "talk in amharic",
+      "speak english",
+      "speak in english",
+      "reply in english",
+    ]);
+  }
+
+  private static isGreeting(text: string): boolean {
+    const t = text.trim();
+    if (t.length > 48) return false;
+    return /^(hi|hello|hey|good\s+(morning|afternoon|evening)|ሰላም|እንደምን|እንዴት\s+ነህ|እንዴት\s+ነሽ)/i.test(t);
+  }
+
+  private static asksLocalHealthInfo(text: string): boolean {
+    const lower = text.toLowerCase();
+    if (/[\u1200-\u137F]/.test(text)) {
+      return this.containsAny(lower, [
+        "በሽታ",
+        "ኬስ",
+        "ሞት",
+        "ስርጭት",
+        "ኮሌራ",
+        "ማላሪያ",
+        "ወረርሽኝ",
+        "አካባቢ",
+        "ወረዳ",
+        "ክፍተት",
+        "ጤና",
+        "ምልክት",
+      ]);
+    }
+    return this.containsAny(lower, [
+      "cholera",
+      "malaria",
+      "measles",
+      "dengue",
+      "typhoid",
+      "disease",
+      "cases",
+      "outbreak",
+      "spread",
+      "symptom",
+      "sick",
+      "local",
+      "near me",
+      "my area",
+      "how many",
+      "situation",
+      "update",
+    ]);
+  }
+
+  private static buildContextualShortReply(
+    language: AppLanguage,
+    context: {
+      userDistrict: string | null;
+      userRegion: string | null;
+      topDiseases: UserDiseaseContext["topDiseases"];
+      recentAnomalies: Array<{ district: string; diseaseType: string }>;
+      advisories: UserDiseaseContext["advisories"];
+      nearbyFacilities: UserDiseaseContext["nearbyFacilities"];
+    },
+    userMessage: string,
+  ): string {
+    const area =
+      context.userDistrict ?? context.userRegion ?? (language === "AMHARIC" ? "አካባቢዎ" : "your area");
+
+    if (this.isLanguagePreferenceRequest(userMessage)) {
+      return language === "AMHARIC"
+        ? "እሺ፣ አሁን በአማርኛ እመለሳለሁ። ስለ ምልክቶች፣ መከላከል ወይም የአካባቢ ጤና ሁኔታ ጠይቁ። እኔ ሐኪም አይደለሁም።"
+        : "Sure — I'll reply in English. Ask about symptoms, prevention, or health near you. I am not a doctor.";
+    }
+
+    if (this.isGreeting(userMessage)) {
+      return language === "AMHARIC"
+        ? "ሰላም! ስለ ምልክቶች፣ መከላከል ወይም የአካባቢ ጤና መረጃ ማንኛውንም ጥያቄ መጠየቅ ይችላሉ። እኔ ሐኪም አይደለሁም።"
+        : "Hello! Ask about symptoms, prevention, or health in your area. I am not a doctor.";
+    }
+
+    const asksFacility =
+      /hospital|clinic|facility|health center|ተቋም|ሆስፒታል|ክሊኒክ|ቅርብ/i.test(userMessage);
+
+    if (asksFacility && context.nearbyFacilities.length > 0) {
+      const names = context.nearbyFacilities
+        .slice(0, 3)
+        .map((f) => f.name)
+        .join(language === "AMHARIC" ? "፣ " : ", ");
+      return language === "AMHARIC"
+        ? `በ${area} ቅርብ የጤና ተቋሞች፦ ${names}። ከባድ ምልክት ካለ ወዲያውኑ ይሂዱ።`
+        : `Nearby facilities near ${area}: ${names}. Go immediately if symptoms are severe.`;
+    }
+
+    if (!this.asksLocalHealthInfo(userMessage)) {
+      return language === "AMHARIC"
+        ? "ጥያቄዎን ለመመለስ ዝግጁ ነኝ። ስለ ምልክቶች፣ መከላከል ወይም በአካባቢዎ ያለው የጤና ሁኔታ ጠይቁ። እኔ ሐኪም አይደለሁም።"
+        : "I'm here to help with symptoms, prevention, or health in your area. Ask a specific question. I am not a doctor.";
+    }
+
+    const top = context.topDiseases[0];
+    const spike = context.recentAnomalies[0];
+    const disease = top?.diseaseType ?? spike?.diseaseType;
+    const elevated = Boolean(spike);
+
+    if (language === "AMHARIC") {
+      if (disease) {
+        const activity = elevated
+          ? `በ${area} ስለ ${disease} ከመደበኛው በላይ እንቅስቃሴ እየታየ ነው።`
+          : `በ${area} ስለ ${disease} የጤና ቅርበቶች እየተከታተሉ ነው።`;
+        return `${activity} ለዝርዝር ምክር ቅርብ የጤና ተቋም ይጠይቁ። እኔ ሐኪም አይደለሁም።`;
+      }
+      return `በ${area} ቅርብ የጤና ተቋም ይጠይቁ። እኔ ሐኪም አይደለሁም።`;
+    }
+
+    if (disease) {
+      const activity = elevated
+        ? `In ${area}, ${disease} activity looks higher than usual right now.`
+        : `In ${area}, health officials are monitoring ${disease}.`;
+      return `${activity} Visit a nearby facility for personal advice. I am not a doctor.`;
+    }
+    return `Limited data for ${area}. Visit a nearby health facility with questions. I am not a doctor.`;
+  }
+
   private static containsAny(text: string, terms: string[]) {
     const lower = text.toLowerCase();
     return terms.some((term) => lower.includes(term));
@@ -192,6 +418,19 @@ export class ChatService {
     context: UserDiseaseContext;
   }): string | null {
     const text = input.message.trim();
+
+    if (this.isLanguagePreferenceRequest(text)) {
+      return input.language === "AMHARIC"
+        ? "እሺ፣ አሁን በአማርኛ እመለሳለሁ። ስለ ምልክቶች፣ መከላከል ወይም የአካባቢ ጤና ሁኔታ ጠይቁ። እኔ ሐኪም አይደለሁም።"
+        : "Sure — I'll reply in English. Ask about symptoms, prevention, or health near you. I am not a doctor.";
+    }
+
+    if (this.isGreeting(text)) {
+      return input.language === "AMHARIC"
+        ? "ሰላም! ስለ ምልክቶች፣ መከላከል ወይም የአካባቢ ጤና መረጃ ማንኛውንም ጥያቄ መጠየቅ ይችላሉ። እኔ ሐኪም አይደለሁም።"
+        : "Hello! Ask about symptoms, prevention, or health in your area. I am not a doctor.";
+    }
+
     const asksReportFacility = this.containsAny(text, [
       "report",
       "reported",
@@ -295,20 +534,16 @@ export class ChatService {
     return null;
   }
 
-  private static buildFallbackReply(language: AppLanguage, context: { userDistrict?: string | null; userRegion: string | null }) {
+  private static buildFallbackReply(
+    language: AppLanguage,
+    context: { userDistrict?: string | null; userRegion: string | null },
+  ) {
+    const area =
+      context.userDistrict ?? context.userRegion ?? (language === "AMHARIC" ? "አካባቢዎ" : "your area");
     if (language === "AMHARIC") {
-      return [
-        "አሁን ላይ የAI አገልግሎቴ በጊዜያዊነት አልተገኘም።",
-        `እባክዎ በ${context.userDistrict ?? context.userRegion} አቅራቢያ ያለ የጤና ተቋም ምክር ይውሰዱ እና ከባድ ምልክት ካለ አስቸኳይ ህክምና ይፈልጉ።`,
-        "እኔ AI ረዳት ነኝ፤ ሐኪም አይደለሁም። ለሕክምና ምርመራ የጤና ባለሙያን ያማክሩ።",
-      ].join(" ");
+      return `አገልግሎቱ ለጊዜው አልተገኘም። በ${area} ቅርብ የጤና ተቋም ይጠይቁ። እኔ ሐኪም አይደለሁም።`;
     }
-
-    return [
-      "My AI service is temporarily unavailable.",
-      `Please seek guidance from a nearby health facility in ${context.userDistrict ?? context.userRegion ?? "your area"}, especially if symptoms are severe.`,
-      "I am an AI assistant, not a doctor. Please consult a healthcare professional for diagnosis and treatment.",
-    ].join(" ");
+    return `Service is busy. Visit a health facility near ${area} if needed. I am not a doctor.`;
   }
 
 
@@ -509,6 +744,8 @@ export class ChatService {
           zScore: true,
           currentCases: true,
           historicalMean: true,
+          stdDev: true,
+          classification: true,
           createdAt: true,
         },
       }),
@@ -550,13 +787,22 @@ export class ChatService {
     if (!env.GEMINI_API_KEY) {
       throw new Error("GEMINI_API_KEY is missing");
     }
+    if (this.geminiQuotaBlocked) {
+      throw new Error("GEMINI_QUOTA_EXCEEDED");
+    }
 
     const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
-    const modelsToTry = ["gemini-flash-latest", ];
-    let lastError: any = null;
+    const modelsToTry = [
+      "gemini-2.0-flash",
+      "gemini-1.5-flash",
+      "gemini-1.5-flash-8b",
+      "gemini-flash-latest",
+    ];
+    let lastError: unknown = null;
 
     for (const modelName of modelsToTry) {
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      if (this.geminiQuotaBlocked) break;
+      for (let attempt = 1; attempt <= 2; attempt++) {
         try {
           const model = genAI.getGenerativeModel({ model: modelName });
           const result = await model.generateContent(input.prompt);
@@ -564,21 +810,38 @@ export class ChatService {
           const text = response.text().trim();
 
           if (text) return text;
-        } catch (error: any) {
+        } catch (error: unknown) {
           lastError = error;
-          const is503 = error.message?.includes("503") || error.status === 503;
-          const is404 = error.message?.includes("404") || error.status === 404;
+          const err = error as { message?: string; status?: number };
+          const msg = err.message ?? "";
+          const is429 = err.status === 429 || msg.includes("429");
+          const is503 = msg.includes("503") || err.status === 503;
+          const is404 = msg.includes("404") || err.status === 404;
 
-          if (is404) break; // Try next model immediately if 404
-          if (!is503 || attempt === 3) break; // Don't retry if not 503 or last attempt
+          if (is429) {
+            this.geminiQuotaBlocked = true;
+            Logger.warn(
+              "Gemini free-tier quota reached; using rule-based fallbacks until server restart",
+            );
+            break;
+          }
+          if (is404) break;
+          if (!is503 || attempt === 2) break;
 
-          Logger.warn(`Gemini ${modelName} failed with 503, retrying... (attempt ${attempt}/3)`);
-          await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
+          Logger.warn(`Gemini ${modelName} failed with 503, retrying... (attempt ${attempt}/2)`);
+          await new Promise((resolve) => setTimeout(resolve, 800 * attempt));
         }
       }
     }
 
-    Logger.error("All Gemini models failed", { error: lastError?.message });
+    if (!this.geminiQuotaBlocked) {
+      Logger.error("All Gemini models failed", {
+        error:
+          lastError instanceof Error
+            ? lastError.message
+            : String(lastError ?? "unknown"),
+      });
+    }
     throw lastError || new Error("All Gemini models failed");
   }
 
@@ -607,7 +870,10 @@ export class ChatService {
     return messages.map((m) => ({
       id: m.id,
       role: m.role,
-      text: m.content,
+      text:
+        m.role === "ASSISTANT"
+          ? this.sanitizeChatReply(m.content)
+          : m.content,
       language: this.mapLanguage(m.language),
       createdAt: m.createdAt,
     }));
@@ -626,7 +892,7 @@ export class ChatService {
       throw new AppError("message is required", 400);
     }
 
-    const language = this.mapLanguage(input.language);
+    const language = this.resolveEffectiveLanguage(text, input.language);
     const conversationId = await this.getOrCreateConversation(input.userId);
 
     await prisma.chatMessage.create({
@@ -648,8 +914,8 @@ export class ChatService {
     const diseaseContext = await this.getUserDiseaseContext(input.userId);
     const languageInstruction =
       language === "AMHARIC"
-        ? `Respond only in Amharic (አማርኛ). Write full sentences using Ethiopic Unicode script (e.g. ሰላም) — do not use Latin letters for Amharic words. If you include disease names that are commonly used in English, you may keep them in Latin. Never answer in English when the user wrote in Amharic.`
-        : "Respond only in English.";
+        ? `መልስዎን በአማርኛ ብቻ (Ethiopic Unicode)። አጭር — ከ3 ዓረፍተ ነገሮች አይበልጡ።`
+        : "Respond only in English. Max 3 short sentences.";
 
     const prompt = [
       SYSTEM_PROMPT,
@@ -657,9 +923,9 @@ export class ChatService {
       "",
       `User location context: region=${diseaseContext.userRegion}, district=${diseaseContext.userDistrict ?? "N/A"}, coverage=${diseaseContext.areaScope}`,
       `Districts included in summaries: ${JSON.stringify(diseaseContext.districtsInScope)}`,
-      `Recent disease report totals (last ~30 days by diseaseType): ${JSON.stringify(diseaseContext.topDiseases)}`,
-      `Statistical anomaly signals in this area (from z-score engine, last ~30 days): ${JSON.stringify(diseaseContext.recentAnomalies)}`,
-      `Recent approved advisories: ${JSON.stringify(diseaseContext.advisories)}`,
+      `Recent disease report totals (last ~30 days): ${JSON.stringify(diseaseContext.topDiseases)}`,
+      `Higher-than-usual illness activity: ${JSON.stringify(this.formatAreaActivityForChat(diseaseContext.recentAnomalies))}`,
+      `Recent health guidance: ${JSON.stringify(this.formatGuidanceForChat(diseaseContext.advisories))}`,
       `Recent report rows with source facility when present: ${JSON.stringify(diseaseContext.recentReports)}`,
       `Nearby health facilities from DB in this user's area: ${JSON.stringify(diseaseContext.nearbyFacilities)}`,
       "When asked where a report was submitted, use `recentReports` and mention facility only if `healthFacilityName` exists; otherwise say it is district-level only.",
@@ -678,11 +944,12 @@ export class ChatService {
     });
 
     if (deterministic) {
+      const safeDeterministic = this.sanitizeChatReply(deterministic);
       const assistantMessage = await prisma.chatMessage.create({
         data: {
           conversationId,
           role: "ASSISTANT",
-          content: deterministic,
+          content: safeDeterministic,
           language,
           modelProvider: "RULES",
         },
@@ -698,7 +965,7 @@ export class ChatService {
       return {
         id: assistantMessage.id,
         role: assistantMessage.role,
-        text: assistantMessage.content,
+        text: safeDeterministic,
         language: this.mapLanguage(assistantMessage.language),
         createdAt: assistantMessage.createdAt,
         provider: "RULES",
@@ -711,13 +978,15 @@ export class ChatService {
         prompt,
         language,
       });
+      ai = { ...ai, text: this.sanitizeChatReply(ai.text) };
     } catch (error) {
-      Logger.error("All chat providers failed, returning fallback response", { error });
+      if (this.isGeminiQuotaError(error)) {
+        Logger.warn("Gemini quota reached; using rule-based chat reply");
+      } else {
+        Logger.error("All chat providers failed, returning contextual fallback", { error });
+      }
       ai = {
-        text: this.buildFallbackReply(language, {
-          userDistrict: diseaseContext.userDistrict,
-          userRegion: diseaseContext.userRegion,
-        }),
+        text: this.buildContextualShortReply(language, diseaseContext, text),
         provider: "FALLBACK",
       };
     }
@@ -755,32 +1024,90 @@ export class ChatService {
       throw new AppError("message is required", 400);
     }
 
-    const language = this.mapLanguage(input.language);
+    const language = this.resolveEffectiveLanguage(text, input.language);
     const context = await this.getPublicDiseaseContext();
     const languageInstruction =
       language === "AMHARIC"
-        ? `Respond only in Amharic (አማርኛ). Keep it concise and safe.`
-        : "Respond only in English. Keep it concise and safe.";
+        ? `መልስዎን በአማርኛ ብቻ (Ethiopic)። አጭር — ከ3 ዓረፍተ ነገሮች አይበልጡ።`
+        : "Respond only in English. Max 3 short sentences.";
+
+    const deterministic = this.tryDeterministicReply({
+      message: text,
+      language,
+      context: {
+        userRegion: "Ethiopia",
+        userDistrict: null,
+        areaScope: "UNKNOWN",
+        districtsInScope: [],
+        topDiseases: context.topDiseases,
+        recentAnomalies: context.recentAnomalies,
+        advisories: context.advisories.map((a) => ({
+          diseaseType: a.diseaseType,
+          riskLevel: a.riskLevel,
+          title: a.title,
+        })),
+        recentReports: [],
+        nearbyFacilities: [],
+      },
+    });
+
+    if (deterministic) {
+      return {
+        id: `guest-${Date.now()}`,
+        role: "ASSISTANT" as const,
+        text: this.sanitizeChatReply(deterministic),
+        language,
+        createdAt: new Date(),
+        provider: "RULES",
+      };
+    }
 
     const prompt = [
       SYSTEM_PROMPT,
       languageInstruction,
       "This is an anonymous public visitor. Do not imply saved history or personalized district access.",
-      "Give general public advisory guidance and invite sign up for personalized, unlimited advisory chat.",
-      `National public context: ${JSON.stringify(context)}`,
+      "Give general public health guidance and invite sign up for personalized health chat.",
+      `National public context: ${JSON.stringify({
+        topDiseases: context.topDiseases,
+        elevatedAreas: this.formatAreaActivityForChat(context.recentAnomalies),
+        healthGuidance: this.formatGuidanceForChat(
+          context.advisories.map((a) => ({
+            diseaseType: a.diseaseType,
+            riskLevel: a.riskLevel,
+            title: a.title,
+          })),
+        ),
+      })}`,
       `Visitor message: ${text}`,
     ].join("\n");
 
     let ai: { text: string; provider: string };
     try {
       ai = await this.requestAssistantReply({ prompt, language });
+      ai = { ...ai, text: this.sanitizeChatReply(ai.text) };
     } catch (error) {
-      Logger.error("Public chat provider failed, returning fallback response", { error });
+      if (this.isGeminiQuotaError(error)) {
+        Logger.warn("Gemini quota reached; using rule-based public chat reply");
+      } else {
+        Logger.error("Public chat provider failed, returning contextual fallback", { error });
+      }
       ai = {
-        text: this.buildFallbackReply(language, {
-          userRegion: "Ethiopia",
-          userDistrict: null,
-        }),
+        text: this.buildContextualShortReply(
+          language,
+          {
+            userRegion: "Ethiopia",
+            userDistrict: null,
+            topDiseases: context.topDiseases,
+            recentAnomalies: context.recentAnomalies,
+            advisories: context.advisories.map((a) => ({
+              diseaseType: a.diseaseType,
+              riskLevel: a.riskLevel,
+              title: a.title,
+            })),
+            nearbyFacilities: [],
+          },
+          text,
+        ),
         provider: "FALLBACK",
       };
     }
@@ -788,7 +1115,7 @@ export class ChatService {
     return {
       id: `guest-${Date.now()}`,
       role: "ASSISTANT" as const,
-      text: ai.text,
+      text: this.sanitizeChatReply(ai.text),
       language,
       createdAt: new Date(),
       provider: ai.provider,
