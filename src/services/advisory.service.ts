@@ -7,6 +7,7 @@ import { AppError } from "../utils/AppError";
 import { AuditService } from "./audit.service";
 import {
   buildCitizenSmsAlert,
+  buildFallbackAdvisoryTranslation,
   enrichCitizenAdvisoryContent,
   sanitizePublicHealthText,
 } from "../utils/healthMessaging";
@@ -46,6 +47,18 @@ type SymptomCheckerResult = {
   advice: string;
   disclaimer: string;
   language: SupportedLanguage;
+};
+
+type PublicAdvisoryRow = {
+  id: string;
+  title: string;
+  content: string;
+  titleAmharic?: string | null;
+  contentAmharic?: string | null;
+  diseaseType: string;
+  riskLevel: string;
+  language: string;
+  district?: { name: string } | null;
 };
 
 export class AdvisoryService {
@@ -416,21 +429,61 @@ export class AdvisoryService {
     return undefined;
   }
 
+  private static withStoredLocalization<
+    T extends PublicAdvisoryRow & { publicContent: string },
+  >(
+    row: T,
+    preferred?: SupportedLanguage,
+  ): T & { translatedTitle?: string; translatedContent?: string } {
+    if (preferred !== "AMHARIC") {
+      return row;
+    }
+
+    const storedTitle = row.titleAmharic?.trim();
+    const storedContent = row.contentAmharic?.trim();
+    if (storedTitle && storedContent) {
+      return {
+        ...row,
+        translatedTitle: storedTitle,
+        translatedContent: enrichCitizenAdvisoryContent(storedContent, {
+          diseaseType: row.diseaseType,
+          district: row.district?.name ?? "your area",
+          riskLevel: row.riskLevel,
+        }),
+      };
+    }
+
+    const fallback = buildFallbackAdvisoryTranslation({
+      title: row.title,
+      diseaseType: row.diseaseType,
+      district: row.district?.name ?? "your area",
+      riskLevel: row.riskLevel,
+      sourceLanguage: "ENGLISH",
+      targetLanguage: "AMHARIC",
+    });
+
+    if (!fallback) {
+      return row;
+    }
+
+    return {
+      ...row,
+      translatedTitle: fallback.translatedTitle,
+      translatedContent: fallback.translatedContent,
+    };
+  }
+
   static async getAllAdvisories(language?: string) {
     const preferred = this.normalizePublicLanguage(language);
 
-    const baseWhere = { status: AdvisoryStatus.APPROVED } as const;
-    const languageWhere = preferred
-      ? { ...baseWhere, language: preferred }
-      : baseWhere;
-
-    const fetchRows = (where: typeof languageWhere) =>
-      prisma.advisory.findMany({
-      where,
+    const rows = await prisma.advisory.findMany({
+      where: { status: AdvisoryStatus.APPROVED },
       select: {
         id: true,
         title: true,
         content: true,
+        titleAmharic: true,
+        contentAmharic: true,
         diseaseType: true,
         riskLevel: true,
         language: true,
@@ -467,12 +520,9 @@ export class AdvisoryService {
       },
     });
 
-    let rows = await fetchRows(languageWhere);
-    if (rows.length === 0 && preferred) {
-      rows = await fetchRows(baseWhere);
-    }
-
-    return rows.map((row) => this.withPublicAdvisoryContent(row));
+    return rows
+      .map((row) => this.withPublicAdvisoryContent(row))
+      .map((row) => this.withStoredLocalization(row, preferred));
   }
 
   static async getAdvisoryById(advisoryId: string) {
@@ -615,6 +665,8 @@ export class AdvisoryService {
     approvedById?: string;
     title?: string;
     content?: string;
+    titleAmharic?: string;
+    contentAmharic?: string;
     language?: string;
     status?: AdvisoryStatus;
     riskLevel?: string;
@@ -628,6 +680,8 @@ export class AdvisoryService {
       approvedById,
       title,
       content,
+      titleAmharic,
+      contentAmharic,
       language,
       status,
       riskLevel,
@@ -645,6 +699,29 @@ export class AdvisoryService {
       this.parseEnumValue(status, AdvisoryStatus, "status") ??
       AdvisoryStatus.DRAFT;
 
+    let resolvedTitleAmharic = titleAmharic?.trim() || null;
+    let resolvedContentAmharic = contentAmharic?.trim() || null;
+
+    if (!resolvedTitleAmharic || !resolvedContentAmharic) {
+      const districtRow = districtId
+        ? await prisma.district.findUnique({
+            where: { id: districtId },
+            select: { name: true },
+          })
+        : null;
+      const bilingual = buildFallbackAdvisoryTranslation({
+        title: title ?? "",
+        diseaseType,
+        district: districtRow?.name ?? "your area",
+        riskLevel: riskLevel ?? "MODERATE",
+        sourceLanguage: "ENGLISH",
+        targetLanguage: "AMHARIC",
+      });
+      resolvedTitleAmharic = resolvedTitleAmharic ?? bilingual?.translatedTitle ?? null;
+      resolvedContentAmharic =
+        resolvedContentAmharic ?? bilingual?.translatedContent ?? null;
+    }
+
     return prisma.advisory.create({
       data: {
         diseaseType,
@@ -654,7 +731,9 @@ export class AdvisoryService {
         approvedById,
         title,
         content,
-        language: language ?? "AMHARIC",
+        titleAmharic: resolvedTitleAmharic,
+        contentAmharic: resolvedContentAmharic,
+        language: language ?? "ENGLISH",
         status: parsedStatus,
         riskLevel: riskLevel ?? "MODERATE",
         generatedByAI: generatedByAI ?? true,

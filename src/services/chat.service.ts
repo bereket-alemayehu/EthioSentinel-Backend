@@ -75,6 +75,10 @@ export class ChatService {
   /** After a 429, skip further Gemini calls until the server restarts. */
   private static geminiQuotaBlocked = false;
 
+  static isGeminiQuotaBlocked(): boolean {
+    return this.geminiQuotaBlocked;
+  }
+
   private static isGeminiQuotaError(error: unknown): boolean {
     const msg = error instanceof Error ? error.message : String(error);
     return msg.includes("GEMINI_QUOTA_EXCEEDED") || msg.includes("429");
