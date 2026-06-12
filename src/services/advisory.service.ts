@@ -14,7 +14,6 @@ import {
 import { EmailSender } from "../utils/EmailSender";
 import { SmsSender } from "../utils/SmsSender";
 import Logger from "../utils/logger";
-import { riskFromAnomalySignal } from "../utils/risk.util";
 
 type SupportedLanguage = "ENGLISH" | "AMHARIC";
 
@@ -700,35 +699,6 @@ export class AdvisoryService {
       this.parseEnumValue(status, AdvisoryStatus, "status") ??
       AdvisoryStatus.DRAFT;
 
-    let resolvedRiskLevel = riskLevel;
-    if (!resolvedRiskLevel && sourceReportId) {
-      const [sourceReport, anomalySignal] = await Promise.all([
-        prisma.diseaseReport.findUnique({
-          where: { id: sourceReportId },
-          select: { caseCount: true, deathCount: true },
-        }),
-        prisma.anomalySignal.findFirst({
-          where: { reportId: sourceReportId },
-          orderBy: { createdAt: "desc" },
-          select: { zScore: true },
-        }),
-      ]);
-      if (sourceReport) {
-        const mortalityRate =
-          sourceReport.caseCount > 0
-            ? sourceReport.deathCount / sourceReport.caseCount
-            : 0;
-        resolvedRiskLevel = riskFromAnomalySignal({
-          zScore:
-            anomalySignal?.zScore != null
-              ? Number(anomalySignal.zScore)
-              : undefined,
-          deaths: sourceReport.deathCount,
-          mortalityRate,
-        });
-      }
-    }
-
     let resolvedTitleAmharic = titleAmharic?.trim() || null;
     let resolvedContentAmharic = contentAmharic?.trim() || null;
 
@@ -743,7 +713,7 @@ export class AdvisoryService {
         title: title ?? "",
         diseaseType,
         district: districtRow?.name ?? "your area",
-        riskLevel: resolvedRiskLevel ?? "MODERATE",
+        riskLevel: riskLevel ?? "MODERATE",
         sourceLanguage: "ENGLISH",
         targetLanguage: "AMHARIC",
       });
@@ -765,7 +735,7 @@ export class AdvisoryService {
         contentAmharic: resolvedContentAmharic,
         language: language ?? "ENGLISH",
         status: parsedStatus,
-        riskLevel: resolvedRiskLevel ?? "MODERATE",
+        riskLevel: riskLevel ?? "MODERATE",
         generatedByAI: generatedByAI ?? true,
         approvedAt:
           parsedStatus === AdvisoryStatus.APPROVED ? new Date() : undefined,

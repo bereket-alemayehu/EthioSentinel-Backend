@@ -49,7 +49,6 @@ export class AdvisoryController {
   });
 
   static getAllAdvisories = catchAsync(async (req: Request, res: Response) => {
-    // Accept both ?lang= (sent by frontend) and ?language= for backwards-compat
     const language =
       (typeof req.query.language === "string" ? req.query.language : undefined) ??
       (typeof req.query.lang === "string" ? req.query.lang : undefined);
