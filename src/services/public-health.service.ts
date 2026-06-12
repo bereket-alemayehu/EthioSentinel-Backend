@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma";
 import Logger from "../utils/logger";
+import { riskFromAggregatedCounts } from "../utils/risk.util";
 
 type RiskLevel = "LOW" | "MODERATE" | "HIGH" | "CRITICAL";
 
@@ -98,10 +99,7 @@ function extractReadableSummary(raw: unknown): string {
 }
 
 function riskFromCounts(cases: number, deaths: number, spikeCount: number): RiskLevel {
-  if (deaths >= 10 || spikeCount >= 3 || cases >= 1000) return "CRITICAL";
-  if (deaths >= 3 || spikeCount >= 1 || cases >= 250) return "HIGH";
-  if (deaths >= 1 || cases >= 50) return "MODERATE";
-  return "LOW";
+  return riskFromAggregatedCounts(cases, deaths, spikeCount);
 }
 
 function detectTerms(text: string, terms: string[]) {

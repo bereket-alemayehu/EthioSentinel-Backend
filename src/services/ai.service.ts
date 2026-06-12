@@ -13,6 +13,11 @@ import {
   buildAdminSpikeSummary,
   buildDetailedCitizenAdvisory,
 } from "../utils/healthMessaging";
+import {
+  reportRiskToAlertSeverity,
+  riskFromAnomalySignal,
+  type ReportRiskLevel,
+} from "../utils/risk.util";
 
 type WeeklyAggregate = {
   weekStart: string;
@@ -302,26 +307,39 @@ export class AIService {
     }
   }
 
-  private static getSeverityFromZScore(zScore?: number): "HIGH" | "CRITICAL" {
-    if (typeof zScore === "number" && zScore >= 3) {
-      return "CRITICAL";
-    }
-    return "HIGH";
+  private static getSeverityFromAnomaly(input: {
+    zScore?: number;
+    currentDeaths: number;
+    mortalityRate?: number;
+  }): "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" {
+    return reportRiskToAlertSeverity(
+      riskFromAnomalySignal({
+        zScore: input.zScore,
+        deaths: input.currentDeaths,
+        mortalityRate: input.mortalityRate,
+      }),
+    );
   }
 
-  private static getRiskLevelFromZScore(
-    zScore?: number,
-  ): "MODERATE" | "HIGH" | "CRITICAL" {
-    if (typeof zScore === "number" && zScore >= 3) return "CRITICAL";
-    if (typeof zScore === "number" && zScore >= 2) return "HIGH";
-    return "MODERATE";
+  private static getRiskLevelFromAnomaly(input: {
+    zScore?: number;
+    currentDeaths: number;
+    mortalityRate?: number;
+  }): ReportRiskLevel {
+    return riskFromAnomalySignal({
+      zScore: input.zScore,
+      deaths: input.currentDeaths,
+      mortalityRate: input.mortalityRate,
+    });
   }
 
   private static async buildSuggestedAdvisoryContent(input: {
     diseaseType: string;
     district: string;
     currentCases: number;
+    currentDeaths: number;
     historicalMean: number;
+    mortalityRate?: number;
     zScore?: number;
   }): Promise<string> {
     const z = typeof input.zScore === "number" ? input.zScore.toFixed(2) : "unknown";
@@ -371,7 +389,11 @@ Affected Area:
         diseaseType: input.diseaseType,
         district: input.district,
         currentCases: input.currentCases,
-        riskLevel: "HIGH",
+        riskLevel: this.getRiskLevelFromAnomaly({
+          zScore: input.zScore,
+          currentDeaths: input.currentDeaths,
+          mortalityRate: input.mortalityRate,
+        }),
       });
     }
   }
@@ -381,7 +403,9 @@ Affected Area:
     diseaseType: string;
     district: string;
     currentCases: number;
+    currentDeaths: number;
     historicalMean: number;
+    mortalityRate?: number;
     zScore?: number;
   }): Promise<{ id: string } | null> {
     const districtRow = await prisma.district.findFirst({
@@ -418,7 +442,11 @@ Affected Area:
       return existing;
     }
 
-    const riskLevel = this.getRiskLevelFromZScore(input.zScore);
+    const riskLevel = this.getRiskLevelFromAnomaly({
+      zScore: input.zScore,
+      currentDeaths: input.currentDeaths,
+      mortalityRate: input.mortalityRate,
+    });
 
     return prisma.advisory.create({
       data: {
@@ -442,7 +470,9 @@ Affected Area:
     diseaseType: string;
     district: string;
     currentCases: number;
+    currentDeaths: number;
     historicalMean: number;
+    mortalityRate?: number;
     zScore?: number;
     advisoryDraftId?: string;
   }): Promise<string | undefined> {
@@ -462,7 +492,11 @@ Affected Area:
       return existingAlert.id;
     }
 
-    const severity = this.getSeverityFromZScore(input.zScore);
+    const severity = this.getSeverityFromAnomaly({
+      zScore: input.zScore,
+      currentDeaths: input.currentDeaths,
+      mortalityRate: input.mortalityRate,
+    });
     const message = buildCitizenAlertMessage({
       diseaseType: input.diseaseType,
       district: input.district,
@@ -562,12 +596,11 @@ Affected Area:
     zScore?: number;
     source: "AUTOMATED_REPORT" | "MANUAL_ANALYSIS" | "PREDICTION";
   }): Promise<string | undefined> {
-    const severity =
-      typeof input.currentDeaths === "number" &&
-      input.currentDeaths > 0 &&
-      (input.currentDeaths >= 3 || (input.mortalityRate ?? 0) >= 0.1)
-        ? "CRITICAL"
-        : this.getSeverityFromZScore(input.zScore);
+    const severity = this.getSeverityFromAnomaly({
+      zScore: input.zScore,
+      currentDeaths: input.currentDeaths ?? 0,
+      mortalityRate: input.mortalityRate,
+    });
     const oneDayAgo = new Date();
     oneDayAgo.setUTCDate(oneDayAgo.getUTCDate() - 1);
     const title = buildCitizenAlertTitle(input.diseaseType, input.district);
@@ -785,8 +818,10 @@ Affected Area:
         reportId: reportRow.id,
         diseaseType: reportRow.diseaseType,
         district: reportRow.district,
-        currentCases: reportRow.caseCount,
+        currentCases,
+        currentDeaths,
         historicalMean: payload.historical_mean,
+        mortalityRate,
         zScore,
       });
       advisoryDraftId = advisoryDraft?.id;
@@ -795,8 +830,10 @@ Affected Area:
         reportId: reportRow.id,
         diseaseType: reportRow.diseaseType,
         district: reportRow.district,
-        currentCases: reportRow.caseCount,
+        currentCases,
+        currentDeaths,
         historicalMean: payload.historical_mean,
+        mortalityRate,
         zScore,
         advisoryDraftId,
       });

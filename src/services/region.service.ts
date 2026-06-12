@@ -1,8 +1,12 @@
 import { prisma } from "../lib/prisma";
+import {
+  normalizeAddisAbabaDistrictList,
+  normalizeRegionName,
+} from "../utils/geo.util";
 
 export class RegionService {
   static async getAllRegions() {
-    return prisma.region.findMany({
+    const regions = await prisma.region.findMany({
       select: {
         id: true,
         name: true,
@@ -16,11 +20,22 @@ export class RegionService {
             latitude: true,
             longitude: true,
           },
+          orderBy: { name: "asc" },
         },
       },
       orderBy: {
         name: "asc",
       },
+    });
+
+    return regions.map((region) => {
+      if (normalizeRegionName(region.name) !== "Addis Ababa") {
+        return region;
+      }
+      return {
+        ...region,
+        districts: normalizeAddisAbabaDistrictList(region.districts),
+      };
     });
   }
 }

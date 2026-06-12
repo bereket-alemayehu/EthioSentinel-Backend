@@ -1,5 +1,5 @@
 import { prisma } from "../lib/prisma";
-import { AdvisoryStatus } from "@prisma/client";
+import { AdvisoryStatus, Prisma } from "@prisma/client";
 import { AppError } from "../utils/AppError";
 import logger from "../utils/logger";
 import { EmailSender } from "../utils/EmailSender";
@@ -48,6 +48,44 @@ type AlertNotificationDetails = {
   disease: { name: string } | null;
   advisory: { content: string; diseaseType?: string; title?: string } | null;
 };
+
+function normalizeZoneLabel(value: string | null | undefined): string {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+/** Whether an alert target zone applies to the user's region and/or assigned district. */
+function alertTargetZoneMatchesUser(
+  targetZone: string,
+  region: string | null | undefined,
+  assignedDistrict: string | null | undefined,
+): boolean {
+  const zone = normalizeZoneLabel(targetZone);
+  if (!zone) return false;
+
+  const userRegion = normalizeZoneLabel(region);
+  const userDistrict = normalizeZoneLabel(assignedDistrict);
+
+  if (userDistrict && (zone === userDistrict || zone.includes(userDistrict))) {
+    return true;
+  }
+
+  if (userRegion && zone === userRegion) {
+    return true;
+  }
+
+  if (userRegion && userDistrict && zone.includes(userRegion) && zone.includes(userDistrict)) {
+    return true;
+  }
+
+  if (userRegion && zone.includes(userRegion) && !userDistrict) {
+    return true;
+  }
+
+  return false;
+}
 
 export class AlertService {
   private static toAlertManagementView(alert: {
@@ -281,12 +319,22 @@ export class AlertService {
 
     const citizensInDistrict = await prisma.user.findMany({
       where: {
-        role: "CITIZEN",
-        assignedDistrict: {
-          equals: alert.targetZone,
-          mode: "insensitive",
-        },
+        role: { in: ["CITIZEN", "HEW"] },
         isActive: true,
+        OR: [
+          {
+            assignedDistrict: {
+              equals: alert.targetZone,
+              mode: "insensitive",
+            },
+          },
+          {
+            region: {
+              equals: alert.targetZone,
+              mode: "insensitive",
+            },
+          },
+        ],
       },
       select: {
         email: true,
@@ -584,9 +632,8 @@ export class AlertService {
 
   /**
    * Notification feed for the navbar bell.
-   * - ADMIN / RESEARCHER see the most recent alerts globally.
-   * - HEW / CITIZEN see alerts whose targetZone matches their region or
-   *   assignedDistrict (case-insensitive).
+   * - ADMIN / RESEARCHER / SUPER_ADMIN see delivered alerts plus pending AI drafts.
+   * - HEW / CITIZEN see delivered alerts whose targetZone matches their region or district.
    */
   static async getNotificationsForUserId(userId: string, limit?: number) {
     const cap = Math.max(1, Math.min(50, limit ?? 10));
@@ -601,44 +648,38 @@ export class AlertService {
     }
 
     const role = String(user.role).toUpperCase();
-    const isPrivileged = role === "ADMIN" || role === "RESEARCHER";
+    const isPrivileged =
+      role === "ADMIN" || role === "RESEARCHER" || role === "SUPER_ADMIN";
 
-    const orFilters: Array<{
-      targetZone: { equals: string; mode: "insensitive" };
-    }> = [];
-    if (user.region) {
-      orFilters.push({
-        targetZone: { equals: user.region, mode: "insensitive" },
-      });
-    }
-    if (user.assignedDistrict) {
-      orFilters.push({
-        targetZone: {
-          equals: user.assignedDistrict,
-          mode: "insensitive",
-        },
-      });
-    }
+    const where: Prisma.AlertWhereInput = isPrivileged
+      ? {
+          OR: [
+            { isDelivered: true },
+            { aiSuggested: true, isDelivered: false },
+          ],
+        }
+      : { isDelivered: true };
 
-    const zoneFilter =
-      orFilters.length > 0
-        ? { OR: orFilters }
-        : { id: "__none__" };
-
-    const where = isPrivileged
-      ? { isDelivered: true }
-      : { isDelivered: true, ...zoneFilter };
+    const fetchLimit = isPrivileged ? cap : Math.min(cap * 5, 50);
 
     const alerts = await prisma.alert.findMany({
       where,
       include: { disease: { select: { name: true } } },
       orderBy: { createdAt: "desc" },
-      take: cap,
+      take: fetchLimit,
     });
 
-    const visibleAlerts = isPrivileged ? alerts : alerts.filter((a) => a.isDelivered);
+    const visibleAlerts = isPrivileged
+      ? alerts
+      : alerts.filter((alert) =>
+          alertTargetZoneMatchesUser(
+            alert.targetZone,
+            user.region,
+            user.assignedDistrict,
+          ),
+        );
 
-    return visibleAlerts.map((a) => ({
+    return visibleAlerts.slice(0, cap).map((a) => ({
       id: a.id,
       title: a.title,
       message: a.message,

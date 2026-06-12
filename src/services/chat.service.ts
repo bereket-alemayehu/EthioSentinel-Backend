@@ -72,8 +72,36 @@ const CHAT_FORBIDDEN_TERMS =
   /\b(z-?score|anomaly detection|anomaly signal|baseline mean|AI draft|advisory pipeline)\b/gi;
 
 export class ChatService {
-  /** After a 429, skip further Gemini calls until the server restarts. */
-  private static geminiQuotaBlocked = false;
+  /**
+   * Track which API key (if any) has hit the quota limit, and WHEN.
+   * After GEMINI_BLOCK_DURATION_MS the block expires automatically so the
+   * key is retried without requiring a server restart.
+   */
+  private static blockedGeminiApiKey: string | null = null;
+  private static blockedGeminiAt: number = 0;
+  /** How long (ms) to pause Gemini calls after a 429 — 30 minutes. */
+  private static readonly GEMINI_BLOCK_DURATION_MS = 30 * 60 * 1000;
+
+  private static isGeminiCurrentlyBlocked(): boolean {
+    if (!this.blockedGeminiApiKey) return false;
+    if (this.blockedGeminiApiKey !== env.GEMINI_API_KEY) {
+      // API key changed in env — clear the block
+      this.blockedGeminiApiKey = null;
+      return false;
+    }
+    if (Date.now() - this.blockedGeminiAt > this.GEMINI_BLOCK_DURATION_MS) {
+      // Block has expired — retry
+      Logger.info("Gemini quota block expired, retrying API key");
+      this.blockedGeminiApiKey = null;
+      return false;
+    }
+    return true;
+  }
+
+  private static blockGeminiKey(): void {
+    this.blockedGeminiApiKey = env.GEMINI_API_KEY;
+    this.blockedGeminiAt = Date.now();
+  }
 
   private static isGeminiQuotaError(error: unknown): boolean {
     const msg = error instanceof Error ? error.message : String(error);
@@ -787,7 +815,8 @@ export class ChatService {
     if (!env.GEMINI_API_KEY) {
       throw new Error("GEMINI_API_KEY is missing");
     }
-    if (this.geminiQuotaBlocked) {
+    // Check time-based block (auto-expires after GEMINI_BLOCK_DURATION_MS)
+    if (this.isGeminiCurrentlyBlocked()) {
       throw new Error("GEMINI_QUOTA_EXCEEDED");
     }
 
@@ -801,7 +830,7 @@ export class ChatService {
     let lastError: unknown = null;
 
     for (const modelName of modelsToTry) {
-      if (this.geminiQuotaBlocked) break;
+      if (this.isGeminiCurrentlyBlocked()) break;
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
           const model = genAI.getGenerativeModel({ model: modelName });
@@ -819,9 +848,9 @@ export class ChatService {
           const is404 = msg.includes("404") || err.status === 404;
 
           if (is429) {
-            this.geminiQuotaBlocked = true;
+            this.blockGeminiKey();
             Logger.warn(
-              "Gemini free-tier quota reached; using rule-based fallbacks until server restart",
+              `Gemini free-tier quota reached; blocking for ${this.GEMINI_BLOCK_DURATION_MS / 60000} minutes. Will auto-retry after that.`,
             );
             break;
           }
@@ -834,7 +863,7 @@ export class ChatService {
       }
     }
 
-    if (!this.geminiQuotaBlocked) {
+    if (!this.isGeminiCurrentlyBlocked()) {
       Logger.error("All Gemini models failed", {
         error:
           lastError instanceof Error

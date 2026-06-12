@@ -9,12 +9,19 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { seedDiseases } from "./seed-diseases";
 import healthcenter, { seedHealthCenters } from "./seed.healthcenter";
+import {
+  ADDIS_ABABA_SUB_CITIES,
+  ADDIS_ABABA_SUB_CITY_COORDS,
+  normalizeRegionName,
+  resolveDistrictName,
+} from "../utils/geo.util";
 
 type DistrictSeed = {
   name: string;
   code: string;
   latitude: number | null;
   longitude: number | null;
+  coordSamples?: number;
 };
 
 type RegionSeed = {
@@ -42,11 +49,8 @@ function hashSuffix(input: string, size = 4) {
     .toUpperCase();
 }
 
-function normalizeRegionName(raw: string) {
-  const name = raw.trim();
-  const lowered = name.toLowerCase();
-  if (lowered === "amahara") return "Amhara";
-  return name;
+function normalizeRegionNameLocal(raw: string) {
+  return normalizeRegionName(raw);
 }
 
 function buildRegionsFromHealthCenter(): RegionSeed[] {
@@ -61,9 +65,11 @@ function buildRegionsFromHealthCenter(): RegionSeed[] {
   >();
 
   for (const item of healthcenter as any[]) {
-    const regionName = normalizeRegionName((item.Region || "").toString());
+    const regionName = normalizeRegionNameLocal((item.Region || "").toString());
     if (!regionName) continue;
-    const woreda = (item.Woreda || "").toString().trim();
+    const zone = (item.Zone || "").toString();
+    const woreda = (item.Woreda || "").toString();
+    const districtName = resolveDistrictName(regionName, zone, woreda);
     const y = Number(item.Y);
     const x = Number(item.X);
 
@@ -76,26 +82,61 @@ function buildRegionsFromHealthCenter(): RegionSeed[] {
       });
     }
 
-    if (woreda) {
+    if (districtName) {
       const region = map.get(regionName)!;
-      if (!region.districts.has(woreda)) {
-        const districtCode = `${region.code}-${slugCode(woreda, 12)}-${hashSuffix(`${region.name}:${woreda}`)}`;
-        region.districts.set(woreda, {
-          name: woreda,
+      const hasCoords =
+        Number.isFinite(y) &&
+        Number.isFinite(x) &&
+        y >= 3 &&
+        y <= 15.5 &&
+        x >= 33 &&
+        x <= 48.5;
+      const existing = region.districts.get(districtName);
+      if (!existing) {
+        const districtCode = `${region.code}-${slugCode(districtName, 12)}-${hashSuffix(`${region.name}:${districtName}`)}`;
+        region.districts.set(districtName, {
+          name: districtName,
           code: districtCode,
-          latitude: Number.isFinite(y) && y >= -90 && y <= 90 ? y : null,
-          longitude: Number.isFinite(x) && x >= -180 && x <= 180 ? x : null,
+          latitude: hasCoords ? y : null,
+          longitude: hasCoords ? x : null,
+          coordSamples: hasCoords ? 1 : 0,
         });
+      } else if (hasCoords) {
+        const samples = (existing.coordSamples ?? 0) + 1;
+        const prevLat = existing.latitude ?? y;
+        const prevLon = existing.longitude ?? x;
+        existing.latitude = prevLat + (y - prevLat) / samples;
+        existing.longitude = prevLon + (x - prevLon) / samples;
+        existing.coordSamples = samples;
       }
     }
   }
 
-  return Array.from(map.values()).map((r) => ({
-    name: r.name,
-    code: r.code,
-    primaryLanguage: r.primaryLanguage,
-    districts: Array.from(r.districts.values()),
-  }));
+  return Array.from(map.values()).map((r) => {
+    let districts = Array.from(r.districts.values()).map(({ coordSamples: _s, ...district }) => district);
+
+    if (r.name === "Addis Ababa") {
+      const byName = new Map(districts.map((district) => [district.name, district]));
+      districts = ADDIS_ABABA_SUB_CITIES.map((name) => {
+        const existing = byName.get(name);
+        if (existing) return existing;
+        const fallback = ADDIS_ABABA_SUB_CITY_COORDS[name];
+        return {
+          name,
+          code: `${r.code}-${slugCode(name, 12)}-${hashSuffix(`${r.name}:${name}`)}`,
+          latitude: fallback.latitude,
+          longitude: fallback.longitude,
+        };
+      });
+    }
+
+    return {
+      name: r.name,
+      code: r.code,
+      primaryLanguage: r.primaryLanguage,
+      districts,
+    };
+  });
 }
 
 const ethiopiaRegions: RegionSeed[] = buildRegionsFromHealthCenter();

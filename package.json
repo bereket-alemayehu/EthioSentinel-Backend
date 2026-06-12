@@ -19,6 +19,7 @@
     "db:push": "prisma db push --config prisma.config.ts",
     "studio": "prisma studio --config prisma.config.ts",
     "seed": "ts-node --files src/scripts/seed.ts",
+    "db:backfill-district-coords": "ts-node --files src/scripts/backfill-district-coordinates.ts",
     "seed:super-admin": "ts-node --files src/scripts/seed-super-admin.ts",
     "seed:prediction-demo": "ts-node --files src/scripts/seed-prediction-demo.ts",
     "test:zscore": "ts-node --files src/scripts/test-zscore-spike.ts"

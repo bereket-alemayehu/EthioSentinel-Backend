@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma";
 import crypto from "crypto";
+import { isPlausibleEthiopiaCoordinate } from "../utils/geo.util";
 
 function slugCode(name: string, max = 4) {
   const cleaned = name
@@ -13636,6 +13637,22 @@ export async function seedHealthCenters() {
       }
     }
 
+    const yVal = toNumeric(item.Y);
+    const xVal = toNumeric(item.X);
+    if (
+      district?.id &&
+      isPlausibleEthiopiaCoordinate(yVal, xVal) &&
+      (district.latitude == null || district.longitude == null)
+    ) {
+      district = await (prisma as any).district.update({
+        where: { id: district.id },
+        data: { latitude: yVal, longitude: xVal },
+      });
+      if (region && woreda) {
+        districtCache.set(`${region.id}::${woreda}`, district);
+      }
+    }
+
     // Find by the unique constraint: [districtId, HF_Name]
     const existing = await (prisma as any).healthFacility.findFirst({
       where: {
@@ -13643,9 +13660,6 @@ export async function seedHealthCenters() {
         HF_Name: hfName,
       },
     });
-
-    const yVal = toNumeric(item.Y);
-    const xVal = toNumeric(item.X);
 
     // Validate and constrain coordinates to valid range for Decimal(9,6)
     // Valid range: -999.999999 to 999.999999
