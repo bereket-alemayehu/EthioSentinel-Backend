@@ -254,6 +254,8 @@ model Advisory {
   approvedById    String?
   title           String
   content         String
+  titleAmharic    String?
+  contentAmharic  String?
   language        String
   status          AdvisoryStatus @default(DRAFT)
   riskLevel       String         @default("MODERATE")

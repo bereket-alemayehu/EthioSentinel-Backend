@@ -11,7 +11,9 @@ import {
   buildCitizenAlertMessage,
   buildCitizenAlertTitle,
   buildAdminSpikeSummary,
-  buildDetailedCitizenAdvisory,
+  buildBilingualAdvisoryFallback,
+  parseBilingualAdvisoryGeminiReply,
+  type BilingualAdvisoryText,
 } from "../utils/healthMessaging";
 import {
   reportRiskToAlertSeverity,
@@ -333,7 +335,7 @@ export class AIService {
     });
   }
 
-  private static async buildSuggestedAdvisoryContent(input: {
+  private static async buildBilingualSuggestedAdvisory(input: {
     diseaseType: string;
     district: string;
     currentCases: number;
@@ -341,60 +343,66 @@ export class AIService {
     historicalMean: number;
     mortalityRate?: number;
     zScore?: number;
-  }): Promise<string> {
-    const z = typeof input.zScore === "number" ? input.zScore.toFixed(2) : "unknown";
-    
+  }): Promise<BilingualAdvisoryText> {
+    const fallback = buildBilingualAdvisoryFallback({
+      diseaseType: input.diseaseType,
+      district: input.district,
+      currentCases: input.currentCases,
+      riskLevel: this.getRiskLevelFromAnomaly({
+        zScore: input.zScore,
+        currentDeaths: input.currentDeaths,
+        mortalityRate: input.mortalityRate,
+      }),
+    });
+    const z =
+      typeof input.zScore === "number" ? input.zScore.toFixed(2) : "unknown";
+
     const prompt = `
-You are an expert public health AI.
+You are an expert public health AI for Ethiopia.
 Generate a citizen-friendly health advisory for a recent anomaly detected for ${input.diseaseType} in ${input.district}.
 The data shows current cases are ${input.currentCases} against a historical mean of ${input.historicalMean.toFixed(2)} with a z-score of ${z}.
-Format the advisory EXACTLY like this:
-Title: [Advisory Title]
 
-Disease: [Disease Name]
+Provide BOTH English and Amharic versions in one response.
+Do not mention z-scores, baselines, or internal AI terms in the public text.
 
-Symptoms:
-- [Symptom 1]
-- [Symptom 2]
+Each advisory body must include these sections:
+- Disease
+- Symptoms (bullet list)
+- Prevention (bullet list)
+- Treatment / Action (bullet list)
+- Emergency Signs (bullet list)
+- Affected Area (${input.district} and surrounding areas)
 
-Prevention:
-- [Prevention step 1]
-- [Prevention step 2]
+Respond EXACTLY in this format:
+ENGLISH_TITLE:
+[short English title]
 
-Treatment / Action:
-- [Action 1]
-- [Action 2]
+ENGLISH_CONTENT:
+[full English advisory]
 
-Emergency Signs:
-- [Sign 1]
-- [Sign 2]
+AMHARIC_TITLE:
+[short Amharic title in Ethiopic script]
 
-Affected Area:
-- ${input.district} and surrounding areas
-    `.trim();
+AMHARIC_CONTENT:
+[full Amharic advisory in Ethiopic script]
+`.trim();
 
     try {
       const text = await ChatService.requestGeminiReply({ prompt });
-      return text;
+      return parseBilingualAdvisoryGeminiReply(text, fallback);
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);
       if (!errMsg.includes("GEMINI_QUOTA_EXCEEDED") && !errMsg.includes("429")) {
-        Logger.error("Failed to generate advisory with Gemini, using fallback text", {
-          error: errMsg,
-        });
+        Logger.error(
+          "Failed to generate bilingual advisory with Gemini, using fallback text",
+          { error: errMsg },
+        );
       } else {
-        Logger.warn("Gemini unavailable; using template advisory draft");
+        Logger.warn(
+          "Gemini unavailable; using bilingual template advisory draft",
+        );
       }
-      return buildDetailedCitizenAdvisory({
-        diseaseType: input.diseaseType,
-        district: input.district,
-        currentCases: input.currentCases,
-        riskLevel: this.getRiskLevelFromAnomaly({
-          zScore: input.zScore,
-          currentDeaths: input.currentDeaths,
-          mortalityRate: input.mortalityRate,
-        }),
-      });
+      return fallback;
     }
   }
 
@@ -447,6 +455,10 @@ Affected Area:
       currentDeaths: input.currentDeaths,
       mortalityRate: input.mortalityRate,
     });
+    const bilingual = await this.buildBilingualSuggestedAdvisory({
+      ...input,
+      district: districtRow.name,
+    });
 
     return prisma.advisory.create({
       data: {
@@ -454,8 +466,10 @@ Affected Area:
         regionId: districtRow.regionId,
         districtId: districtRow.id,
         sourceReportId: input.reportId,
-        title: ` ${input.diseaseType} spike detected in ${districtRow.name}`,
-        content: await this.buildSuggestedAdvisoryContent(input),
+        title: bilingual.titleEn,
+        content: bilingual.contentEn,
+        titleAmharic: bilingual.titleAm,
+        contentAmharic: bilingual.contentAm,
         language: "ENGLISH",
         status: "DRAFT",
         riskLevel,
@@ -1131,14 +1145,24 @@ Affected Area:
       throw new Error(`Region not found: "${payload.regionName}"`);
     }
 
+    const normalizedLanguage = String(payload.language).trim().toUpperCase();
+    const bilingualFallback = buildBilingualAdvisoryFallback({
+      diseaseType: payload.diseaseType,
+      district: payload.regionName,
+      riskLevel: payload.riskLevel ?? "MODERATE",
+    });
+
+    const isAmharic = normalizedLanguage === "AMHARIC" || normalizedLanguage === "AM";
     const advisory = await prisma.advisory.create({
       data: {
         diseaseType: payload.diseaseType,
         regionId: region.id,
-        language: payload.language,
+        language: isAmharic ? "AMHARIC" : "ENGLISH",
         riskLevel: payload.riskLevel ?? "MODERATE",
-        title: payload.title,
-        content: payload.content,
+        title: isAmharic ? bilingualFallback.titleEn : payload.title,
+        content: isAmharic ? bilingualFallback.contentEn : payload.content,
+        titleAmharic: isAmharic ? payload.title : bilingualFallback.titleAm,
+        contentAmharic: isAmharic ? payload.content : bilingualFallback.contentAm,
         status: "DRAFT",
         sourceReportId: payload.sourceReportId ?? null,
       },

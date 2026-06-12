@@ -182,6 +182,272 @@ export function buildCitizenAdvisoryContent(input: HealthMessagingInput): string
   });
 }
 
+type DiseaseGuidance = {
+  watchFor: string[];
+  recommendations: string[];
+  seekCare: string[];
+};
+
+function amharicDiseaseGuidance(diseaseType: string): DiseaseGuidance {
+  const d = DISEASE_KEY(diseaseType);
+
+  if (d.includes("measles")) {
+    return {
+      watchFor: [
+        "ከፍተኛ ትኩሳት በኋላ ከፊት ወደ ሰውነት የሚሰፋ የቆዳ ብጥብጦ",
+        "የአፍንጫ ፈሳሽ፣ ቀይ ዓይኖች፣ ተቅማጥ እና ድካም በህጻናት",
+        "ምግብ መብላት መቀነስ ወይም ህጻናት መደንቆዝ",
+      ],
+      recommendations: [
+        "በአካባቢዎ የሚካሄደውን የክትባት ዘመቻ ቀን እና ቦታ ከጤና ተቋም ይጠይቁ።",
+        "የህመም ምልክት ያላቸውን ህጻናት ከትምህርት ቤት፣ ከቤተክርስቲያን እና ከህዝብ ስብሰባ ይቆጠቡ።",
+        "በቤት ውስጥ ዕቃዎችን እና ጨርቆችን አትጋሩ።",
+        "በቤት ውስጥ ጥሩ አየር ማስተላለፍን ያረጋግጡ።",
+        "እርግዝና ያለባቸው እና ህፃናት ከትኩሳት ወይም ብጥብጦ ካለው ሰው ጋር አይገናኙ።",
+      ],
+      seekCare: [
+        "ህጻን መተንፈስ ማጥራት፣ በጣም ማንበብ ወይም ፈሳሽ መጠጣት መቀነስ",
+        "ትኩሳት ከሶስት ቀን በላይ መቆየት ወይም ብጥብጦ ከፍተኛ ትኩሳት ጋር መስፋፋት",
+        "እስከ ስድስት ወር ያልሞላ ህፃን ትኩሳት",
+      ],
+    };
+  }
+
+  if (d.includes("cholera") || d.includes("diarrhea") || d.includes("awd")) {
+    return {
+      watchFor: [
+        "ድንገተኛ የውሃ ማስመለስ እና መተማመን",
+        "የእግር ሳንድዋ፣ ጥምቀት ወይም ደረቅ አፍ",
+        "ቁሶት መቆም ወይም ሲቆሙ ድንገተኛ ድካም",
+      ],
+      recommendations: [
+        "ብልጭታ፣ የተጠበቀ ወይም የተፈቀደ ውሃ ብቻ ይጠጡ።",
+        "ከመብላት በፊት እና ከመጸዳት በኋላ በሳሙና እጅዎን ይታጠቡ።",
+        "ምግብ በጥሩ ሁኔታ ይበስሉ እና ሲሞቅ ይብሉ።",
+        "የቤት ውስጥ አካባቢን ንጹህ ያድርጉ።",
+        "የአፍ ማጽዳት ውሃ (ORS) ካስተማሩዎት በቂ መጠን ይስጡ።",
+      ],
+      seekCare: [
+        "ከባድ የውሃ መጥፋት ምልክቶች (የጠፉ ዓይኖች፣ ሽንት አለመስራት)",
+        "በሽታ ውስጥ ደም ወይም ቀጣይነት ያለው መተማመን",
+        "በቀን ብዙ የውሃ ማስመለስ ያለው ህጻን ወይም አረጋውያን",
+      ],
+    };
+  }
+
+  if (d.includes("malaria")) {
+    return {
+      watchFor: [
+        "ትኩሳት ከራብ፣ ራስ ምታት ወይም የሰውነት ህመም ጋር",
+        "መተማመን፣ መተማመን ወይም ድካም",
+        "ከቀድሞ ህክምና በኋላ የሚመለስ ምልክት",
+      ],
+      recommendations: [
+        "በየሌሊቱ በጨረር የተሳለፈ የአንበሳ መድሃኒት ይጠቀሙ።",
+        "በቤት አካባቢ ያሉ የቆዩ ውሃዎችን ያስወግዱ።",
+        "ማታ ረጅም ስም ይለብሱ።",
+        "የተሰጠውን የማላሪያ መድሃኒት ሙሉ በሙሉ ይጨርሱ።",
+        "እርግዝና ያለባቸው ከጤና ባለሙያ የማላሪያ መከላከል ምክር ይከተሉ።",
+      ],
+      seekCare: [
+        "በእርግዝና ወይም ከአምስት ዓመት በታች ህጻናት ላይ ትኩሳት",
+        "ግራ መጋባት፣ በጣም ቀይ ቆዳ ወይም ከትኩሳት ጋር የመተንፈስ ችግር",
+        "ከ48 ሰዓት በኋላም ትኩሳት ካልተሻሻለ",
+      ],
+    };
+  }
+
+  if (d.includes("tb") || d.includes("tuberculosis")) {
+    return {
+      watchFor: [
+        "ከሁለት ሳምንት በላይ የሚቆይ ተቅማጥ",
+        "የሌሊት ምዝግብ፣ ክብደት መቀነስ ወይም ቀጣይ ትኩሳት",
+        "ደም መሳለፍ ወይም የደረት ህመም",
+      ],
+      recommendations: [
+        "ረጅም ተቅማጥ ላለው ሰው ለምርመራ ወደ ጤና ተቋም ይሂዱ።",
+        "የቲቢ መድሃኒትን በትክክል እና ሙሉ በሙሉ ይውሰዱ።",
+        "ሲተሳሰሉ አፍዎን ይሸፍኑ።",
+        "በቤት ውስጥ መስኮቶችን ክፍት ያድርጉ።",
+      ],
+      seekCare: [
+        "ደም መሳለፍ ወይም ከባድ የደረት ህመም",
+        "ከጎንዮሽ ጋር መድሃኒት መውሰድ አለመቻል",
+      ],
+    };
+  }
+
+  return {
+    watchFor: [
+      "ትኩሳት፣ ተቅማጥ፣ የውሃ ማስመለስ፣ መተማመን፣ ብጥብጦ ወይም ያልተለመደ ድካም",
+      "አዲስ፣ ከባድ ወይም ከጥቂት ቀናት በኋላም የማይሻሻል ምልክት",
+    ],
+    recommendations: [
+      "በሳሙና እና በንጹህ ውሃ እጅዎን በየጊዜው ይታጠቡ።",
+      "ከጎረቤት ጋር ትክክለኛ መረጃ ያጋሩ — ስም ያለው ንግግርን ይቀንሱ።",
+      "የአካባቢ ጤና ቢሮ እና የጤና ሰራተኞች መመሪያ ይከተሉ።",
+      "ታካሚ የቤት ሰዎችን በቤት ዕረፍት ያድርጉ።",
+      "ንጹህ ውሃ እና ደህንነቱ የተጠበቀ የምግብ አያያዝ ይጠቀሙ።",
+    ],
+    seekCare: [
+      "የመተንፈስ ችግር፣ ግራ መጋባት ወይም ፈሳሽ መጠጣት አለመቻል",
+      "በህፃናት፣ በእርግዝና ወይም በአረጋውያን ላይ ከፍተኛ ትኩሳት",
+      "ድንገተኛ የምልክት መባባስ",
+    ],
+  };
+}
+
+function formatAmharicList(title: string, items: string[]): string {
+  return [title, ...items.map((item, i) => `${i + 1}. ${item}`)].join("\n");
+}
+
+/** Rule-based Amharic advisory when Gemini translation is unavailable. */
+export function buildDetailedCitizenAdvisoryAmharic(input: {
+  diseaseType: string;
+  district: string;
+  riskLevel?: string;
+  extraNote?: string;
+}): string {
+  const disease = input.diseaseType.trim() || "ይህ በሽታ";
+  const district = input.district.trim() || "አካባቢዎ";
+  const risk = (input.riskLevel ?? "MODERATE").toUpperCase();
+  const guide = amharicDiseaseGuidance(disease);
+
+  const riskLabel =
+    risk === "CRITICAL"
+      ? "ከባድ"
+      : risk === "HIGH"
+        ? "ከፍተኛ"
+        : risk === "LOW"
+          ? "ዝቅተኛ"
+          : "መካከለኛ";
+
+  const overview = [
+    `በ${district} ክልል ለ${disease} እንቅስቃሴ የጤና ባለሙያዎች መመሪያ አውጥተዋል።`,
+    `የአደጋ ደረጃ፡ ${riskLabel}። ከታች ያሉትን ምክሮች ያንብቡ እና ለቤተሰብ እና ለጎረቤት ያጋሩ።`,
+  ];
+
+  const blocks: string[] = [overview.join(" "), ""];
+
+  if (input.extraNote?.trim()) {
+    blocks.push("ከጤና ባለሙያዎች ዝመና፡", input.extraNote.trim(), "");
+  }
+
+  blocks.push(
+    formatAmharicList("የሚታዩ ምልክቶች፡", guide.watchFor),
+    "",
+    formatAmharicList("ለቤተሰብ እና ለማህበረሰብ ምክሮች፡", guide.recommendations),
+    "",
+    formatAmharicList("ፈጣን ህክምና ያስፈልጋል ካዩ፡", guide.seekCare),
+    "",
+    "ይህ መመሪያ ተጨማሪ መረጃ ሲገኝ ሊዘምን ይችላል። ጥያቄ ካለዎት ቅርብ ያለውን የጤና ተቋም ያነጋግሩ።",
+  );
+
+  return blocks.join("\n");
+}
+
+export type BilingualAdvisoryText = {
+  titleEn: string;
+  contentEn: string;
+  titleAm: string;
+  contentAm: string;
+};
+
+export function buildBilingualAdvisoryFallback(input: {
+  diseaseType: string;
+  district: string;
+  currentCases?: number;
+  riskLevel?: string;
+}): BilingualAdvisoryText {
+  const disease = input.diseaseType.trim() || "General health concern";
+  const district = input.district.trim() || "your area";
+
+  return {
+    titleEn: buildCitizenAdvisoryTitle(disease, district),
+    contentEn: buildDetailedCitizenAdvisory({
+      diseaseType: disease,
+      district,
+      currentCases: input.currentCases,
+      riskLevel: input.riskLevel ?? "MODERATE",
+    }),
+    titleAm: `${disease} በ${district} — የጤና ምክር`,
+    contentAm: buildDetailedCitizenAdvisoryAmharic({
+      diseaseType: disease,
+      district,
+      riskLevel: input.riskLevel ?? "MODERATE",
+    }),
+  };
+}
+
+export function parseBilingualAdvisoryGeminiReply(
+  text: string,
+  fallback: BilingualAdvisoryText,
+): BilingualAdvisoryText {
+  const englishTitleMatch = text.match(
+    /ENGLISH_TITLE:\s*([\s\S]*?)(?=\n\s*ENGLISH_CONTENT:|$)/i,
+  );
+  const englishContentMatch = text.match(
+    /ENGLISH_CONTENT:\s*([\s\S]*?)(?=\n\s*AMHARIC_TITLE:|$)/i,
+  );
+  const amharicTitleMatch = text.match(
+    /AMHARIC_TITLE:\s*([\s\S]*?)(?=\n\s*AMHARIC_CONTENT:|$)/i,
+  );
+  const amharicContentMatch = text.match(/AMHARIC_CONTENT:\s*([\s\S]*)$/i);
+
+  const titleEn =
+    sanitizePublicHealthText(englishTitleMatch?.[1]?.trim() ?? "") ||
+    fallback.titleEn;
+  const contentEn =
+    sanitizePublicHealthText(englishContentMatch?.[1]?.trim() ?? "") ||
+    fallback.contentEn;
+  const titleAm =
+    sanitizePublicHealthText(amharicTitleMatch?.[1]?.trim() ?? "") ||
+    fallback.titleAm;
+  const contentAm =
+    sanitizePublicHealthText(amharicContentMatch?.[1]?.trim() ?? "") ||
+    fallback.contentAm;
+
+  return { titleEn, contentEn, titleAm, contentAm };
+}
+
+export function buildFallbackAdvisoryTranslation(input: {
+  title: string;
+  diseaseType: string;
+  district: string;
+  riskLevel?: string;
+  sourceLanguage: "ENGLISH" | "AMHARIC";
+  targetLanguage: "ENGLISH" | "AMHARIC";
+}): { translatedTitle: string; translatedContent: string } | null {
+  if (input.sourceLanguage === input.targetLanguage) {
+    return null;
+  }
+
+  const disease = input.diseaseType.trim() || "General health concern";
+  const district = input.district.trim() || "your area";
+
+  if (input.targetLanguage === "AMHARIC") {
+    return {
+      translatedTitle: `${disease} በ${district} — የጤና ምክር`,
+      translatedContent: buildDetailedCitizenAdvisoryAmharic({
+        diseaseType: disease,
+        district,
+        riskLevel: input.riskLevel,
+        extraNote: sanitizePublicHealthText(input.title),
+      }),
+    };
+  }
+
+  return {
+    translatedTitle: buildCitizenAdvisoryTitle(disease, district),
+    translatedContent: buildDetailedCitizenAdvisory({
+      diseaseType: disease,
+      district,
+      riskLevel: input.riskLevel,
+      extraNote: sanitizePublicHealthText(input.title),
+    }),
+  };
+}
+
 import { ChatService } from "../services/chat.service";
 
 /**

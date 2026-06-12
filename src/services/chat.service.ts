@@ -103,6 +103,10 @@ export class ChatService {
     this.blockedGeminiAt = Date.now();
   }
 
+  static isGeminiQuotaBlocked(): boolean {
+    return this.isGeminiCurrentlyBlocked();
+  }
+
   private static isGeminiQuotaError(error: unknown): boolean {
     const msg = error instanceof Error ? error.message : String(error);
     return msg.includes("GEMINI_QUOTA_EXCEEDED") || msg.includes("429");
